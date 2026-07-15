@@ -504,6 +504,21 @@ impl MigrationApp {
                         tr(zh, "个会话", "sessions")
                     );
                     self.success = Some(format!("{}：{}", self.status, summary.output));
+                    let detail = if summary.skipped_symlink_count == 0 {
+                        summary.output
+                    } else {
+                        format!(
+                            "{}\n{} {} {}",
+                            summary.output,
+                            tr(zh, "已跳过", "Skipped"),
+                            summary.skipped_symlink_count,
+                            tr(
+                                zh,
+                                "个符号链接，详情见日志",
+                                "symbolic link(s); see logs for details",
+                            )
+                        )
+                    };
                     self.completion_notice = Some(CompletionNotice {
                         title: tr(zh, "备份导出完成", "Backup export completed").to_owned(),
                         message: format!(
@@ -512,7 +527,7 @@ impl MigrationApp {
                             summary.thread_count,
                             tr(zh, "个会话", "sessions")
                         ),
-                        detail: summary.output,
+                        detail,
                     });
                 }
                 Err(error) => self.fail(error),

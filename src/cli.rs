@@ -103,8 +103,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Export(args) => {
             let summary = operations::export_directory(&args.source, &args.output_parent, |_| {})?;
             println!(
-                "backed up the complete Codex directory with {} session file(s) to {}",
-                summary.thread_count, summary.output
+                "backed up the complete Codex directory with {} session file(s) to {}; skipped {} symbolic link(s)",
+                summary.thread_count, summary.output, summary.skipped_symlink_count
             );
         }
         Commands::Scan(args) => {

@@ -119,6 +119,19 @@ fn export_skips_symbolic_links_without_copying_targets() {
     assert!(progress
         .iter()
         .any(|line| line.contains("Skipped symbolic link: linked-outside.txt")));
+
+    let cli_destination = TempDir::new().unwrap();
+    Command::cargo_bin("codex-migrate")
+        .unwrap()
+        .args([
+            "export",
+            source.path().to_str().unwrap(),
+            "--output-parent",
+            cli_destination.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("skipped 1 symbolic link(s)"));
 }
 
 #[test]
