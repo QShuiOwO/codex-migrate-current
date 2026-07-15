@@ -14,7 +14,7 @@ use crate::session_index;
 use crate::sqlite_adapter;
 use crate::transaction::{self, ImportTransaction};
 use crate::validator;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -26,6 +26,7 @@ use walkdir::WalkDir;
 pub struct ExportSummary {
     pub output: String,
     pub thread_count: usize,
+    pub skipped_symlink_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,10 +128,22 @@ pub fn export_directory(
 ) -> Result<ExportSummary> {
     let source_root = resolve_codex_root(source)?;
     discovery::ensure_codex_stopped(&source_root)?;
-    fs::create_dir_all(output_parent)?;
+    fs::create_dir_all(output_parent).with_context(|| {
+        format!(
+            "failed to create backup parent directory {}",
+            output_parent.display()
+        )
+    })?;
 
-    let source_canonical = source_root.canonicalize()?;
-    let output_parent_canonical = output_parent.canonicalize()?;
+    let source_canonical = source_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve source {}", source_root.display()))?;
+    let output_parent_canonical = output_parent.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve backup parent {}",
+            output_parent.display()
+        )
+    })?;
     if output_parent_canonical.starts_with(&source_canonical) {
         return Err(anyhow!(
             "backup destination {} cannot be inside source {}",
@@ -156,7 +169,7 @@ pub fn export_directory(
         source_root.display()
     ));
     let copy_result = copy_codex_home(&source_root, &staging, &mut progress);
-    let (file_count, thread_count) = match copy_result {
+    let (file_count, thread_count, skipped_symlink_count) = match copy_result {
         Ok(summary) => summary,
         Err(error) => {
             let _ = fs::remove_dir_all(&staging);
@@ -165,13 +178,21 @@ pub fn export_directory(
     };
     if let Err(error) = fs::rename(&staging, &output) {
         let _ = fs::remove_dir_all(&staging);
-        return Err(error.into());
+        return Err(error).with_context(|| {
+            format!(
+                "failed to finalize backup by renaming {} to {}",
+                staging.display(),
+                output.display()
+            )
+        });
     }
     progress(format!("Created {}", output.display()));
     progress(format!("Copied {file_count} files"));
+    progress(format!("Skipped {skipped_symlink_count} symbolic links"));
     Ok(ExportSummary {
         output: output.to_string_lossy().into_owned(),
         thread_count,
+        skipped_symlink_count,
     })
 }
 
@@ -179,14 +200,28 @@ fn copy_codex_home(
     source_root: &Path,
     destination_root: &Path,
     progress: &mut impl FnMut(String),
-) -> Result<(usize, usize)> {
-    fs::create_dir_all(destination_root)?;
+) -> Result<(usize, usize, usize)> {
+    fs::create_dir_all(destination_root).with_context(|| {
+        format!(
+            "failed to create backup staging directory {}",
+            destination_root.display()
+        )
+    })?;
     let mut file_count = 0;
     let mut thread_count = 0;
+    let mut skipped_symlink_count = 0;
 
     for entry in WalkDir::new(source_root).follow_links(false) {
-        let entry = entry?;
-        let relative = entry.path().strip_prefix(source_root)?;
+        let entry = entry.with_context(|| {
+            format!("failed to traverse Codex source {}", source_root.display())
+        })?;
+        let relative = entry.path().strip_prefix(source_root).with_context(|| {
+            format!(
+                "failed to derive relative path for {} from {}",
+                entry.path().display(),
+                source_root.display()
+            )
+        })?;
         if relative.as_os_str().is_empty() {
             continue;
         }
@@ -195,16 +230,37 @@ fn copy_codex_home(
         }
         let destination = destination_root.join(relative);
         if entry.file_type().is_dir() {
-            fs::create_dir_all(&destination)?;
+            fs::create_dir_all(&destination).with_context(|| {
+                format!(
+                    "failed to create backup directory {} for source {}",
+                    destination.display(),
+                    entry.path().display()
+                )
+            })?;
+            continue;
+        }
+        if entry.file_type().is_symlink() {
+            skipped_symlink_count += 1;
+            progress(format!("Skipped symbolic link: {}", relative.display()));
             continue;
         }
         if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create backup parent {} for source {}",
+                    parent.display(),
+                    entry.path().display()
+                )
+            })?;
         }
-        if entry.file_type().is_symlink() {
-            copy_symlink(entry.path(), &destination)?;
-        } else if entry.file_type().is_file() {
-            fs::copy(entry.path(), &destination)?;
+        if entry.file_type().is_file() {
+            fs::copy(entry.path(), &destination).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    entry.path().display(),
+                    destination.display()
+                )
+            })?;
             file_count += 1;
             if relative.extension().and_then(|value| value.to_str()) == Some("jsonl")
                 && (relative.starts_with("sessions") || relative.starts_with("archived_sessions"))
@@ -217,7 +273,7 @@ fn copy_codex_home(
         }
     }
 
-    Ok((file_count, thread_count))
+    Ok((file_count, thread_count, skipped_symlink_count))
 }
 
 fn is_login_credential_path(relative: &Path) -> bool {
@@ -232,27 +288,6 @@ fn is_login_credential_path(relative: &Path) -> bool {
             .as_deref(),
         Some("auth.json") | Some("auth.json.bak") | Some("credentials.json") | Some("tokens.json")
     )
-}
-
-#[cfg(unix)]
-fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
-    let target = fs::read_link(source)?;
-    let resolved = source
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(&target);
-    if resolved.is_dir() {
-        std::os::windows::fs::symlink_dir(target, destination)?;
-    } else {
-        std::os::windows::fs::symlink_file(target, destination)?;
-    }
-    Ok(())
 }
 
 pub fn plan_directory_import(

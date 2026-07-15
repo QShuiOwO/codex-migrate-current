@@ -85,6 +85,42 @@ fn exports_scans_and_dry_runs_directory_backup() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn export_skips_symbolic_links_without_copying_targets() {
+    use std::os::unix::fs::symlink;
+
+    let source = TempDir::new().unwrap();
+    create_codex_home(source.path(), "11111111-2222-3333-4444-555555555555");
+    fs::write(source.path().join("regular.txt"), "regular").unwrap();
+    let external = TempDir::new().unwrap();
+    fs::write(external.path().join("outside.txt"), "outside").unwrap();
+    symlink(
+        external.path().join("outside.txt"),
+        source.path().join("linked-outside.txt"),
+    )
+    .unwrap();
+
+    let destination = TempDir::new().unwrap();
+    let mut progress = Vec::new();
+    let summary =
+        codex_migrate::operations::export_directory(source.path(), destination.path(), |message| {
+            progress.push(message)
+        })
+        .unwrap();
+
+    let backup = destination.path().join("Codex_backup");
+    assert_eq!(summary.skipped_symlink_count, 1);
+    assert_eq!(
+        fs::read_to_string(backup.join("regular.txt")).unwrap(),
+        "regular"
+    );
+    assert!(!backup.join("linked-outside.txt").exists());
+    assert!(progress
+        .iter()
+        .any(|line| line.contains("Skipped symbolic link: linked-outside.txt")));
+}
+
 #[test]
 fn scan_without_sqlite_uses_rollout_title_and_groups_by_project() {
     let source = TempDir::new().unwrap();
