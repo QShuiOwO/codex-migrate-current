@@ -1,5 +1,6 @@
 /target/
 /dist/
+/docs/superpowers/
 *.log
 *.tmp
 .DS_Store
