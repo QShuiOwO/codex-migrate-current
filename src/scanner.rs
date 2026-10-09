@@ -192,6 +192,22 @@ fn scan_rollout(
         }
     }
     let sha256 = hex::encode(Sha256::digest(&content));
+    let mut workspace_paths = crate::rollout::workspace_paths(&content)?;
+    if let Some(roots) = extra
+        .get("source_project")
+        .and_then(|p| p["roots"].as_array())
+    {
+        workspace_paths.extend(
+            roots
+                .iter()
+                .filter_map(Value::as_str)
+                .map(crate::path_mapper::normalize),
+        );
+    }
+    extra.insert(
+        "_migrate_workspace_paths".to_owned(),
+        serde_json::json!(workspace_paths),
+    );
     let relative = path
         .strip_prefix(root)
         .unwrap_or(path)

@@ -53,7 +53,7 @@ enum LineIcon {
 fn main() -> eframe::Result<()> {
     let icon = application_icon();
     eframe::run_native(
-        "Codex Migrate",
+        concat!("Codex Migrate ", env!("CARGO_PKG_VERSION")),
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([1240.0, 820.0])
@@ -112,6 +112,7 @@ struct UiProject {
     history_only: bool,
     expanded: bool,
     sessions: Vec<UiSession>,
+    extra_roots: BTreeMap<String, String>,
 }
 
 struct ConfirmationSpec<'a> {
@@ -617,6 +618,7 @@ impl MigrationApp {
         self.status = tr(self.chinese(), "操作失败", "Operation failed").to_owned();
         self.logs.push(error.clone());
         self.error = Some(error);
+        self.show_logs = true;
     }
 
     fn scan(&mut self) {
@@ -812,27 +814,7 @@ impl MigrationApp {
     }
 
     fn import_options(&self) -> ImportOptions {
-        let mut selected_thread_ids = BTreeSet::new();
-        let mut mappings = BTreeMap::new();
-        let mut history_only_projects = BTreeSet::new();
-        for project in &self.projects {
-            let cwd = normalize(&project.original_cwd);
-            for session in &project.sessions {
-                if session.selected {
-                    selected_thread_ids.insert(session.source.thread.id.clone());
-                }
-            }
-            if project.history_only {
-                history_only_projects.insert(cwd);
-            } else if !project.target_path.is_empty() {
-                mappings.insert(cwd, project.target_path.clone());
-            }
-        }
-        ImportOptions {
-            selected_thread_ids,
-            mappings,
-            history_only_projects,
-        }
+        options_from_projects(&self.projects)
     }
 
     fn selected_count(&self) -> usize {
@@ -1035,6 +1017,24 @@ impl MigrationApp {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if secondary_button(ui, None, tr(zh, "清空", "Clear")).clicked() {
                             self.logs.clear();
+                        }
+                        if secondary_button(ui, None, tr(zh, "复制日志", "Copy logs")).clicked()
+                        {
+                            ui.ctx().copy_text(self.logs.join("\n"));
+                        }
+                        if secondary_button(ui, None, tr(zh, "保存日志", "Save logs")).clicked()
+                        {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_file_name("codex-migrate-diagnostics.log")
+                                .save_file()
+                            {
+                                if let Err(error) = std::fs::write(&path, self.logs.join("\n")) {
+                                    self.error = Some(format!(
+                                        "{}: {error:#}",
+                                        tr(zh, "保存日志失败", "Could not save logs")
+                                    ));
+                                }
+                            }
                         }
                     });
                 });
@@ -1362,6 +1362,28 @@ impl MigrationApp {
                                 }
                             });
                         });
+                        if selected > 0 && !project.history_only && !project.extra_roots.is_empty() {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(tr(zh,
+                                "记录还使用了以下目录，请确认它们在本机的位置：",
+                                "The sessions also use these folders. Choose their local locations:")).small().color(MUTED));
+                            for (old, target) in &mut project.extra_roots {
+                                ui.label(RichText::new(old).small());
+                                ui.horizontal(|ui| {
+                                    ui.label(if target.is_empty() { tr(zh, "尚未映射", "Not mapped") } else { target.as_str() });
+                                    if secondary_button(ui, Some(LineIcon::Folder), tr(zh, "选择文件夹", "Choose folder")).clicked() {
+                                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                            *target = path.to_string_lossy().into_owned();
+                                            self.plan = None;
+                                        }
+                                    }
+                                    if !project.target_path.is_empty() && secondary_button(ui, None, tr(zh, "使用项目目录", "Use project folder")).clicked() {
+                                        *target = project.target_path.clone();
+                                        self.plan = None;
+                                    }
+                                });
+                            }
+                        }
                         if selected > 0 && !project.is_ready() {
                             ui.add_space(8.0);
                             status_message(
@@ -2330,6 +2352,7 @@ impl eframe::App for MigrationApp {
 
 fn project_to_ui(project: &SourceProject) -> UiProject {
     UiProject {
+        extra_roots: extra_root_mappings(project),
         original_cwd: project.original_cwd.clone(),
         target_path: project.suggested_target.clone().unwrap_or_default(),
         history_only: false,
@@ -2344,6 +2367,47 @@ fn project_to_ui(project: &SourceProject) -> UiProject {
             })
             .collect(),
     }
+}
+
+fn extra_root_mappings(project: &SourceProject) -> BTreeMap<String, String> {
+    let mut paths = BTreeSet::new();
+    for session in &project.sessions {
+        if let Some(roots) = session
+            .thread
+            .extra
+            .get("_migrate_workspace_paths")
+            .and_then(|p| p.as_array())
+        {
+            paths.extend(
+                roots
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(normalize),
+            );
+        }
+    }
+    let insensitive = cfg!(windows);
+    let cwd = normalize(&project.original_cwd);
+    paths
+        .iter()
+        .filter(|path| {
+            !codex_migrate::path_mapper::prefix_matches(path, &cwd, insensitive)
+                && !paths.iter().any(|parent| {
+                    parent.len() < path.len()
+                        && codex_migrate::path_mapper::prefix_matches(path, parent, insensitive)
+                })
+        })
+        .map(|path| {
+            (
+                path.clone(),
+                if Path::new(path).is_dir() {
+                    path.clone()
+                } else {
+                    String::new()
+                },
+            )
+        })
+        .collect()
 }
 
 fn selected_ids(projects: &[UiProject]) -> BTreeSet<String> {
@@ -2394,18 +2458,30 @@ fn transaction_selection_state(
 
 fn options_from_projects(projects: &[UiProject]) -> ImportOptions {
     let mut mappings = BTreeMap::new();
+    let mut history_only_projects = BTreeSet::new();
     for project in projects {
+        if project.history_only {
+            history_only_projects.insert(normalize(&project.original_cwd));
+            continue;
+        }
         if project.selected_count() > 0 && !project.target_path.is_empty() {
             mappings.insert(
                 normalize(&project.original_cwd),
                 project.target_path.clone(),
+            );
+            mappings.extend(
+                project
+                    .extra_roots
+                    .iter()
+                    .filter(|(_, target)| !target.is_empty())
+                    .map(|(old, target)| (old.clone(), target.clone())),
             );
         }
     }
     ImportOptions {
         selected_thread_ids: selected_ids(projects),
         mappings,
-        history_only_projects: BTreeSet::new(),
+        history_only_projects,
     }
 }
 
@@ -3367,7 +3443,7 @@ fn short_id(value: &str) -> &str {
 }
 
 fn display_error(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    format!("{error:#}")
 }
 
 fn configure_style(context: &egui::Context) {
@@ -3442,12 +3518,157 @@ mod tests {
     use codex_migrate::model::{SourceSession, ThreadRecord};
 
     #[test]
+    fn gui_preserves_error_chain_and_maps_additional_roots() {
+        let mut selected = session("selected");
+        selected.source.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!([
+                "/old/project",
+                "/old/project/.git",
+                "/old/artifacts",
+                "/old/artifacts/.git"
+            ]),
+        );
+        let source = SourceProject {
+            original_cwd: "/old/project".into(),
+            suggested_target: None,
+            sessions: vec![selected.source],
+        };
+        let mut project = project_to_ui(&source);
+        assert_eq!(
+            project.extra_roots.keys().collect::<Vec<_>>(),
+            vec!["/old/artifacts"]
+        );
+        project.target_path = "/new/project".into();
+        project
+            .extra_roots
+            .insert("/old/artifacts".into(), "/new/artifacts".into());
+        let options = options_from_projects(&[project]);
+        assert_eq!(options.mappings["/old/artifacts"], "/new/artifacts");
+        let error = anyhow::anyhow!("workspace root requires an explicit mapping: /old/artifacts")
+            .context("import failed and was rolled back");
+        assert!(display_error(error).contains("/old/artifacts"));
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_MIGRATE_CODEX_BIN pointing to a real native runtime; synthetic data only"]
+    fn gui_export_preview_and_import_with_native_runtime() {
+        use serde_json::json;
+        assert!(std::env::var_os("CODEX_MIGRATE_CODEX_BIN").is_some_and(|p| !p.is_empty()));
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        let old = format!("C:/missing-codex-migrate-{}/project", uuid::Uuid::new_v4());
+        let extra = format!(
+            "C:/missing-codex-migrate-{}/artifacts",
+            uuid::Uuid::new_v4()
+        );
+        let id = uuid::Uuid::new_v4().to_string();
+        let turn = uuid::Uuid::new_v4().to_string();
+        let records = [
+            json!({"type":"session_meta","payload":{"id":id,"timestamp":"2026-10-01T00:00:00Z","cwd":old,"source":"vscode","originator":"Codex Desktop","model_provider":"openai","cli_version":"0.162.0-alpha.2","history_mode":"paginated","runtime_workspace_roots":[old,extra]}}),
+            json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn,"root_turn_id":turn,"model_context_window":272000,"collaboration_mode_kind":"default"}}),
+            json!({"type":"turn_context","payload":{"cwd":old,"sandbox_policy":{"type":"workspace-write","writable_roots":[old,extra],"network_access":false,"exclude_tmpdir_env_var":false,"exclude_slash_tmp":false}}}),
+            json!({"type":"event_msg","payload":{"type":"item_completed","thread_id":id,"turn_id":turn,"started_at_ms":1790812800000_i64,"completed_at_ms":1790812800100_i64,"item":{"type":"UserMessage","id":uuid::Uuid::new_v4().to_string(),"content":[{"type":"text","text":"Synthetic GUI migration","text_elements":[]}],"client_id":null}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":turn,"last_agent_message":"Synthetic"}}),
+        ];
+        std::fs::create_dir_all(source.join("sessions")).unwrap();
+        let mut bytes = Vec::new();
+        for (ordinal, mut value) in records.into_iter().enumerate() {
+            value["timestamp"] = json!("2026-10-01T00:00:00Z");
+            value["ordinal"] = json!(ordinal);
+            bytes.extend(serde_json::to_vec(&value).unwrap());
+            bytes.push(b'\n');
+        }
+        std::fs::write(
+            source
+                .join("sessions")
+                .join(format!("rollout-2026-10-01T00-00-00-{id}.jsonl")),
+            &bytes,
+        )
+        .unwrap();
+        let exported =
+            operations::export_directory(&source, &root.path().join("backups"), |_| {}).unwrap();
+        let backup = PathBuf::from(exported.output);
+        let catalog = operations::scan_source(&backup).unwrap();
+        let mut projects = catalog
+            .projects
+            .iter()
+            .map(project_to_ui)
+            .collect::<Vec<_>>();
+        let main = root.path().join("新项目");
+        let artifacts = root.path().join("额外目录");
+        std::fs::create_dir(&main).unwrap();
+        std::fs::create_dir(&artifacts).unwrap();
+        projects[0].target_path = main.to_string_lossy().into_owned();
+        let error = operations::plan_directory_import(
+            &backup,
+            Some(&target),
+            &options_from_projects(&projects),
+        )
+        .unwrap_err();
+        let detail = display_error(error);
+        assert!(detail.contains("workspace root requires an explicit mapping"));
+        assert!(detail.contains(&extra));
+        assert!(detail.contains("诊断日志"));
+        assert!(
+            !target.exists(),
+            "missing mapping must be rejected before target writes"
+        );
+        projects[0]
+            .extra_roots
+            .insert(normalize(&extra), artifacts.to_string_lossy().into_owned());
+        let options = options_from_projects(&projects);
+        operations::plan_directory_import(&backup, Some(&target), &options).unwrap();
+        let summary =
+            operations::import_directory(&backup, Some(&target), &options, |_| {}).unwrap();
+        assert_eq!(summary.imported, 1);
+        let imported = operations::scan_local(Some(&target)).unwrap();
+        assert_eq!(imported.thread_count, 1);
+        assert_eq!(
+            normalize(&imported.projects[0].original_cwd),
+            normalize(&main.to_string_lossy())
+        );
+        let imported_path = &imported.projects[0].sessions[0].source_path;
+        let db = rusqlite::Connection::open(target.join("state_5.sqlite")).unwrap();
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM project_roots", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        // A JSONL-only source has no native project record, but keeps both runtime roots.
+        let value: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(imported_path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            value["payload"]["runtime_workspace_roots"],
+            json!([main.to_string_lossy(), artifacts.to_string_lossy()])
+        );
+        assert_eq!(
+            std::fs::read(
+                source
+                    .join("sessions")
+                    .join(format!("rollout-2026-10-01T00-00-00-{id}.jsonl"))
+            )
+            .unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
     fn project_selection_supports_all_partial_and_none() {
         let mut project = UiProject {
             original_cwd: "/old/project".to_owned(),
             target_path: String::new(),
             history_only: false,
             expanded: true,
+            extra_roots: BTreeMap::new(),
             sessions: vec![session("one"), session("two")],
         };
         assert_eq!(project.state(), CheckState::All);
@@ -3476,6 +3697,7 @@ mod tests {
             target_path: String::new(),
             history_only: false,
             expanded: true,
+            extra_roots: BTreeMap::new(),
             sessions: vec![session("one")],
         }];
         apply_parent_mapping_to(
@@ -3496,6 +3718,7 @@ mod tests {
             target_path: String::new(),
             history_only: false,
             expanded: true,
+            extra_roots: BTreeMap::new(),
             sessions: vec![session("one")],
         };
         assert!(project_has_path_problem(&project));
@@ -3508,6 +3731,7 @@ mod tests {
             target_path: "/project".to_owned(),
             history_only: false,
             expanded: true,
+            extra_roots: BTreeMap::new(),
             sessions: vec![session("one"), session("two")],
         }];
         set_projects_selected(&mut projects, false);

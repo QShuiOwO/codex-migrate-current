@@ -125,8 +125,8 @@ def main():
     root.mkdir(parents=True)
     results = {'runtime': subprocess.check_output([str(args.codex_bin), '--version'], text=True).strip(), 'cases': [], 'root': str(root)}
 
-    def run(home, arguments, success=True, sqlite_home=None, runtime=True):
-        env = dict(os.environ, CODEX_MIGRATE_CODEX_BIN=str(args.codex_bin.resolve()) if runtime else '', CODEX_SQLITE_HOME=str(sqlite_home or home))
+    def run(home, arguments, success=True, sqlite_home=None, runtime=True, executable_override=None):
+        env = dict(os.environ, CODEX_MIGRATE_CODEX_BIN=str((executable_override or args.codex_bin).resolve()) if runtime else '', CODEX_SQLITE_HOME=str(sqlite_home or home), CODEX_MIGRATE_LOG_DIR=str(root / 'diagnostic-logs'))
         env.pop('CODEX_HOME', None)
         for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'): env.pop(key, None)
         completed = subprocess.run([str(args.migrate_bin.resolve()), *map(str, arguments)], env=env,
@@ -236,6 +236,20 @@ def main():
     assert logical_snapshot(target) == before
     record('missing ancestor rejected before mutation')
 
+    # Match a backup moved to another machine: its additional root is absent locally.
+    extra_source, extra_target = root / 'extra-source', root / 'extra-target'
+    extra_id, extra_path, _ = fixture(extra_source, old)
+    extra_records = [json.loads(line) for line in extra_path.read_text().splitlines()]
+    extra_records[0]['payload']['runtime_workspace_roots'].append(str(root / 'missing-extra-root'))
+    extra_path.write_text(''.join(json.dumps(v) + '\n' for v in extra_records), encoding='utf-8')
+    rejected = run(extra_target, ['import', extra_source, '--codex-home', extra_target, '--thread', extra_id, *mappings, '--dry-run'], success=False)
+    assert 'workspace root requires an explicit mapping' in rejected.stderr
+    assert not extra_target.exists()
+    failed_logs = [p.read_text(encoding='utf-8') for p in (root / 'diagnostic-logs').glob('*.log')]
+    assert any(extra_id in value and 'missing-extra-root' in value and 'RESULT failure' in value for value in failed_logs)
+    record('missing extra root rejected during preview with persistent diagnostic log')
+
+
     bad_source = root / 'bad-source'
     valid, _, _ = fixture(bad_source, old, identifier='00000000-0000-4000-8000-000000000001')
     bad, bad_path, _ = fixture(bad_source, old, identifier='ffffffff-ffff-4fff-8fff-ffffffffffff')
@@ -247,6 +261,19 @@ def main():
     assert 'rolled back' in rejected.stderr, rejected.stderr
     assert logical_snapshot(target) == before
     record('native registration failure rolls back all DBs and rollouts')
+
+    failed_logs = [p.read_text(encoding='utf-8') for p in (root / 'diagnostic-logs').glob('*.log')]
+    assert any(bad in value and 'RESULT failure' in value and 'Runtime=' in value and 'rolled back' in value and 'lost 1 completed item' in value for value in failed_logs)
+    record('projection failure log retains runtime, root cause and rollback result')
+
+    before = logical_snapshot(target)
+    rejected = run(target, ['import', many_source, '--codex-home', target, '--thread', many, *mappings], success=False, executable_override=args.migrate_bin)
+    assert 'Native RPC initialize' in rejected.stderr and 'stderr tail:' in rejected.stderr
+    assert 'app-server' in rejected.stderr and 'rolled back' in rejected.stderr
+    assert logical_snapshot(target) == before
+    failed_logs = [p.read_text(encoding='utf-8') for p in (root / 'diagnostic-logs').glob('*.log')]
+    assert any('Native RPC initialize' in value and 'app-server' in value and 'RESULT failure' in value for value in failed_logs)
+    record('invalid runtime records startup stderr and restores target')
 
     legacy_source, legacy_target = root / 'legacy-source', root / 'legacy-target'
     legacy, _, _ = fixture(legacy_source, old, mode='legacy')

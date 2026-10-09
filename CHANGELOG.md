@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.2] - 2026-10-09
+
+- Show the complete GUI error chain, expand logs on failure, and add copy/save controls.
+- Persist preview/import diagnostics outside the target history, including actual runtime, paths, mappings, transaction, RPC errors and bounded credential-filtered native stderr.
+- Expose additional workspace and permission directory mappings in the GUI, including JSONL-only backups.
+- Reject missing workspace/project mappings during preview before beginning writes.
+- Prefer the Windows Desktop runtime over a global CLI in PATH, including when PATH is absent.
+- Preserve the original import error if recording new databases also fails.
+- Add GUI export/preview/import testing through the real native runtime using synthetic data.
+
 ## [1.1.0-current.1] - 2026-10-08 (local compatibility fork)
 
 - Target the unified ChatGPT Desktop native runtime 0.162.0-alpha.2.

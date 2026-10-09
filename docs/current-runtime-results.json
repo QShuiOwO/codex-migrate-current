@@ -31,7 +31,19 @@
       "passed": true
     },
     {
+      "name": "missing extra root rejected during preview with persistent diagnostic log",
+      "passed": true
+    },
+    {
       "name": "native registration failure rolls back all DBs and rollouts",
+      "passed": true
+    },
+    {
+      "name": "projection failure log retains runtime, root cause and rollback result",
+      "passed": true
+    },
+    {
+      "name": "invalid runtime records startup stderr and restores target",
       "passed": true
     },
     {
@@ -55,10 +67,10 @@
       "passed": true
     }
   ],
-  "validation_date": "2026-10-09",
-  "build_target": "x86_64-pc-windows-msvc",
-  "ci_run": "https://github.com/QShuiOwO/codex-migrate-current/actions/runs/37923815341",
-  "tested_source_tree": "0b07cc65246bde98b2a599682b25c85b854db1f5",
-  "tested_cli_sha256": "4c4941e9f73fcff45e223026c9e1baaec0623c65664b0365e7ae9441b46eb6c7",
-  "gui_startup_passed": true
+  "version": "1.1.0-current.2",
+  "tested_target": "x86_64-pc-windows-gnu",
+  "gui_native_flow": {
+    "passed": true,
+    "case": "Synthetic export -> GUI project/options construction -> missing mapping rejected -> mapped native import"
+  }
 }

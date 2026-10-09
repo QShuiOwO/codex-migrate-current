@@ -5,7 +5,7 @@ use crate::model::{
 use crate::path_mapper::{history_only_path, map_explicit, normalize};
 use crate::rollout;
 use crate::scanner;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -98,6 +98,34 @@ pub fn build_plan(
                 "_migrate_existing_dependency".to_owned(),
                 serde_json::Value::Bool(true),
             );
+        }
+        // Preflight the bytes actually kept/imported before starting any write transaction.
+        let content = if matches!(
+            action,
+            MergeAction::SkipIdentical | MergeAction::KeepTargetLonger
+        ) {
+            &existing[thread_id].content
+        } else {
+            &source_thread.content
+        };
+        rollout::rewrite_workspace_bytes(content, &mapped_cwd, &options.mappings, history_only)
+            .with_context(|| format!("check workspace mappings for thread {thread_id}"))?;
+        if !history_only {
+            if let Some(roots) = record
+                .extra
+                .get("source_project")
+                .and_then(|p| p["roots"].as_array())
+            {
+                for root in roots.iter().filter_map(serde_json::Value::as_str) {
+                    if map_explicit(root, &options.mappings, &environment.platform).is_none()
+                        && !Path::new(root).is_dir()
+                    {
+                        anyhow::bail!(
+                            "source project root requires a mapping: {root} (thread {thread_id})"
+                        );
+                    }
+                }
+            }
         }
         threads.push(PlannedThread {
             thread: record,

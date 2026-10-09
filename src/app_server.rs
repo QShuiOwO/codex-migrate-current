@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// One native runtime per transaction. Drop releases DB handles before rollback.
@@ -13,6 +13,8 @@ pub struct AppServer {
     stdin: ChildStdin,
     receiver: mpsc::Receiver<Value>,
     next_id: i64,
+    stderr: Arc<Mutex<std::collections::VecDeque<String>>>,
+    stderr_reader: Option<std::thread::JoinHandle<()>>,
 }
 
 impl AppServer {
@@ -24,7 +26,7 @@ impl AppServer {
             .env("CODEX_SQLITE_HOME", sqlite_home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -38,6 +40,25 @@ impl AppServer {
             .stdout
             .take()
             .ok_or_else(|| anyhow!("missing stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("missing stderr"))?;
+        let stderr_tail = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let tail = stderr_tail.clone();
+        let stderr_reader = std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if let Ok(mut lines) = tail.lock() {
+                    // Only retain bounded diagnostics; successful RPC bodies are never logged.
+                    lines.push_back(crate::diagnostics::redact(
+                        &line.chars().take(2048).collect::<String>(),
+                    ));
+                    if lines.len() > 32 {
+                        lines.pop_front();
+                    }
+                }
+            }
+        });
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -53,6 +74,8 @@ impl AppServer {
             stdin,
             receiver,
             next_id: 1,
+            stderr: stderr_tail,
+            stderr_reader: Some(stderr_reader),
         };
         server.request("initialize", json!({
             "clientInfo": {"name": "codex_migrate", "title": "Codex Migrate", "version": env!("CARGO_PKG_VERSION")},
@@ -63,6 +86,24 @@ impl AppServer {
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+        let result = self.request_inner(method, params);
+        if result.is_err() {
+            // Stop the child and drain stderr before returning so early crashes retain their reason.
+            let status = self.child.try_wait().ok().flatten();
+            self.stop();
+            let stderr = self
+                .stderr
+                .lock()
+                .map(|lines| lines.iter().cloned().collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default();
+            return result.with_context(|| {
+                format!("Native RPC {method}; exit={status:?}; stderr tail:\n{stderr}")
+            });
+        }
+        result
+    }
+
+    fn request_inner(&mut self, method: &str, params: Value) -> Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
         self.send(json!({"id": id, "method": method, "params": params}))?;
@@ -181,11 +222,38 @@ impl AppServer {
         self.stdin.flush()?;
         Ok(())
     }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = reader.join();
+        }
+    }
 }
 
 impl Drop for AppServer {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn early_runtime_exit_keeps_stderr_and_rpc_method() {
+        // The Rust test runner rejects --listen, providing a deterministic stderr failure.
+        let home = tempfile::tempdir().unwrap();
+        let error =
+            match AppServer::start(&std::env::current_exe().unwrap(), home.path(), home.path()) {
+                Ok(_) => panic!("test runner unexpectedly implemented App Server"),
+                Err(error) => error,
+            };
+        let message = format!("{error:#}");
+        assert!(message.contains("Native RPC initialize"));
+        assert!(message.contains("stderr tail:"));
+        assert!(message.contains("listen"));
     }
 }

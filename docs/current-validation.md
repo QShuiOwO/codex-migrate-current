@@ -1,5 +1,23 @@
 # 当前版本验证记录
 
+## 2026-10-09 current.2 导入修复
+
+目标仍为 Desktop `26.1002.7124.0` / `codex-cli 0.162.0-alpha.2`。39 项常规 Rust 测试通过（新增完整错误链、持久日志/日志写入失败、运行时退出 stderr、GUI 额外目录映射及 glob 限制保留测试）。另单独启用一项 GUI 原生集成测试：合成记录经过导出备份、GUI 项目和选项构建、缺失额外映射的预览拒绝、补齐映射后原生导入和数据校验，全部通过。该测试默认忽略，需显式提供原生运行时。
+
+新版 release CLI 通过 16 项合成原生场景；在之前 13 项场景上新增：缺少额外目录在预览前拒绝并保留日志、投影失败保留底层原因与回滚结果、错误运行时退出时保留初始化 stderr 并恢复目标。汇总见 [current-runtime-results.json](current-runtime-results.json)。这里的构建目标标明在 JSON 中；MSVC 发布包将在发布前下载复核，最终二进制结果见 Release 说明。
+
+失败日志位于目标历史目录之外；记录程序/运行时版本、路径、映射、事务 ID、进度和完整错误链。成功 RPC 内容不写入日志；凭据字段相关诊断行被遮蔽，源对话没有改写。没有在目标机器或真实账号中复现用户此次具体失败，也没有执行完整鼠标点击验收。
+
+显式运行 GUI 原生流程：
+
+```powershell
+$env:CODEX_MIGRATE_CODEX_BIN = 'C:\实际运行时\codex.exe'
+# 先删除测试 shell 中可能遗留的 CODEX_SQLITE_HOME，避免指向正式数据根。
+cargo test --features gui --bin codex-migrate-gui gui_export_preview_and_import_with_native_runtime -- --ignored --nocapture
+```
+
+以下保留 current.1 的原始验证记录。
+
 日期：2026-10-08。副本版本：`1.1.0-current.1`。
 
 本机目标：Windows x64，ChatGPT Desktop MSIX `OpenAI.Codex 26.1002.7124.0`，实际原生运行时 `codex-cli 0.162.0-alpha.2`。

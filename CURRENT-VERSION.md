@@ -1,6 +1,6 @@
 # 当前 ChatGPT Desktop 适配版
 
-这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.1`，不是上游发布版，也不是 OpenAI 官方工具。
+这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.2`，不是上游发布版，也不是 OpenAI 官方工具。
 
 2026-10-08 的适配目标是这台 Windows 电脑的 ChatGPT Desktop `OpenAI.Codex 26.1002.7124.0`，对应原生运行时 `codex-cli 0.162.0-alpha.2`。测试使用独立目录中的合成对话，没有迁移或改写真实 `.codex`。
 
@@ -12,6 +12,16 @@ Windows x64 发布包从本 Fork 的 Releases 下载，解压后的程序为：
 - `codex-migrate-gui.exe`：图形界面，沿用原项目的操作流程，迁移引擎已更新。
 
 程序可以自动寻找 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`；也可以显式设置 `CODEX_MIGRATE_CODEX_BIN`。分页历史需要使用与桌面应用匹配的原生运行时。
+
+## current.2 导入修复与失败日志
+
+2026-10-09 修复 GUI 只显示“failed / 已回滚”的问题。现在保留完整错误链，失败自动展开日志，可复制或另存。预览和导入会自动生成独立日志，Windows 默认目录为 `%LOCALAPPDATA%\codex-migrate\logs\`，错误中会显示确切文件位置；`CODEX_MIGRATE_LOG_DIR` 可指定其他日志目录。日志在目标对话目录之外，回滚不会删除它。
+
+绑定项目时，GUI 列出记录中额外的工作目录和权限目录。为每项选择本机文件夹；确实希望合并到主项目目录时可点击“使用项目目录”。主项目的子目录沿用主项目映射，不需要逐项选择。仅恢复历史仍使用占位目录。缺失映射现在会在预览/写入前报错。
+
+Windows 自动发现优先使用 Desktop 自带运行时，再查 PATH；显式的 `CODEX_MIGRATE_CODEX_BIN` 仍具有最高优先级。日志记录程序/运行时版本、运行时位置、数据根、映射、事务、失败步骤、完整错误及原生进程 stderr 尾部。它不主动收集对话正文或凭据，凭据字段相关诊断行会被遮蔽；分享日志前核对其中的本机路径和线程 ID。
+
+目标机器此次失败尚未获得底层日志，不能仅凭版本号确认唯一原因。复测覆盖合成备份经过 GUI 选项构建和真实运行时导入，不等同于真实账号的完整鼠标点击验收。
 
 ## 本次修改
 
