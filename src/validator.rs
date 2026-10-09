@@ -44,10 +44,9 @@ pub fn diagnose(environment: &Environment) -> Result<DiagnosticReport> {
     if let Some(state_db) = environment.state_db.as_deref() {
         for thread in &threads {
             let indexed = sqlite_adapter::thread_rollout_path(state_db, &thread.record.id)?;
-            if indexed
-                .as_deref()
-                .is_none_or(|path| Path::new(path) != thread.source_path)
-            {
+            if indexed.as_deref().is_none_or(|path| {
+                Path::new(path).canonicalize().ok() != thread.source_path.canonicalize().ok()
+            }) {
                 issues.push(format!(
                     "thread {} rollout path is missing or stale",
                     thread.record.id
@@ -56,12 +55,31 @@ pub fn diagnose(environment: &Environment) -> Result<DiagnosticReport> {
         }
     }
     let index = session_index::load(&environment.codex_home)?;
+    let ids = threads
+        .iter()
+        .map(|t| t.record.id.as_str())
+        .collect::<HashSet<_>>();
     for thread in &threads {
-        if !index.contains_key(&thread.record.id) {
+        if !thread.record.paginated()
+            && thread
+                .record
+                .thread_source
+                .as_deref()
+                .is_none_or(|s| s == "user")
+            && !index.contains_key(&thread.record.id)
+        {
             issues.push(format!(
                 "thread {} is missing from session_index.jsonl",
                 thread.record.id
             ));
+        }
+        if let Some(parent) = thread.record.history_parent() {
+            if !ids.contains(parent) {
+                issues.push(format!(
+                    "thread {} has missing history_base ancestor {parent}",
+                    thread.record.id
+                ));
+            }
         }
     }
     Ok(DiagnosticReport {
@@ -94,6 +112,7 @@ pub fn run_codex_doctor(environment: &Environment) -> Result<Option<serde_json::
     let output = Command::new(codex)
         .args(["doctor", "--json"])
         .env("CODEX_HOME", &environment.codex_home)
+        .env("CODEX_SQLITE_HOME", &environment.sqlite_home)
         .output()
         .with_context(|| format!("run {} doctor", codex.display()))?;
     // doctor returns non-zero when unrelated checks such as network fail.

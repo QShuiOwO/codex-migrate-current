@@ -1,0 +1,58 @@
+{
+  "runtime": "codex-cli 0.162.0-alpha.2",
+  "cases": [
+    {
+      "name": "dry-run and ancestor closure",
+      "passed": true
+    },
+    {
+      "name": "fresh target, paginated fork, native multiroot project, source unchanged",
+      "passed": true
+    },
+    {
+      "name": "paginated fork HTML includes ancestor messages",
+      "passed": true
+    },
+    {
+      "name": "repeat import without duplicate histories/projects",
+      "passed": true
+    },
+    {
+      "name": "rebind cached paginated fork and full manual rollback",
+      "passed": true
+    },
+    {
+      "name": "history item pagination beyond first 100 items",
+      "passed": true,
+      "items": 205
+    },
+    {
+      "name": "missing ancestor rejected before mutation",
+      "passed": true
+    },
+    {
+      "name": "native registration failure rolls back all DBs and rollouts",
+      "passed": true
+    },
+    {
+      "name": "legacy history preserved under current runtime",
+      "passed": true
+    },
+    {
+      "name": "paginated migration without runtime rejected before writes",
+      "passed": true
+    },
+    {
+      "name": "archived paginated thread stays archived and readable",
+      "passed": true
+    },
+    {
+      "name": "history-only fork uses stub workspace without native project",
+      "passed": true
+    },
+    {
+      "name": "separate CODEX_SQLITE_HOME and fresh-target rollback",
+      "passed": true
+    }
+  ]
+}

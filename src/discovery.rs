@@ -18,7 +18,7 @@ pub struct Environment {
 }
 
 pub fn discover(explicit_home: Option<&Path>) -> Result<Environment> {
-    let codex_home = if let Some(path) = explicit_home {
+    let mut codex_home = if let Some(path) = explicit_home {
         path.to_path_buf()
     } else if let Some(path) = env::var_os("CODEX_HOME") {
         PathBuf::from(path)
@@ -27,15 +27,33 @@ pub fn discover(explicit_home: Option<&Path>) -> Result<Environment> {
             .ok_or_else(|| anyhow!("cannot determine home directory"))?
             .join(".codex")
     };
+    if !codex_home.is_absolute() {
+        codex_home = env::current_dir()?.join(codex_home);
+    }
 
-    let sqlite_home = env::var_os("CODEX_SQLITE_HOME")
+    let mut sqlite_home = env::var_os("CODEX_SQLITE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| codex_home.clone());
+    if !sqlite_home.is_absolute() {
+        sqlite_home = env::current_dir()?.join(sqlite_home);
+    }
     let state_db = find_state_db(&sqlite_home)?;
     let schema_version = state_db
         .as_deref()
         .and_then(|path| read_schema_version(path).ok().flatten());
-    let codex_executable = find_executable("codex");
+    let codex_executable = if let Some(path) = env::var_os("CODEX_MIGRATE_CODEX_BIN") {
+        if path.is_empty() {
+            None
+        } else {
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                anyhow::bail!("CODEX_MIGRATE_CODEX_BIN is not a file: {}", path.display());
+            }
+            Some(path.canonicalize()?)
+        }
+    } else {
+        find_executable("codex")
+    };
     let codex_version = codex_executable
         .as_deref()
         .and_then(|path| command_version(path).ok());
@@ -77,17 +95,18 @@ pub fn ensure_codex_stopped(codex_home: &Path) -> Result<()> {
     }
     let running = if cfg!(target_os = "windows") {
         Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq Codex.exe", "/NH"])
+            .args(["/NH"])
             .output()
             .ok()
             .is_some_and(|output| {
                 String::from_utf8_lossy(&output.stdout)
                     .to_ascii_lowercase()
-                    .contains("codex.exe")
+                    .lines()
+                    .any(|line| line.starts_with("codex.exe") || line.starts_with("chatgpt.exe"))
             })
     } else {
         let desktop_running = Command::new("pgrep")
-            .args(["-f", "Codex.app/Contents/MacOS/Codex"])
+            .args(["-f", "(Codex|ChatGPT).app/Contents/MacOS/(Codex|ChatGPT)"])
             .status()
             .is_ok_and(|status| status.success());
         let cli_running = Command::new("pgrep")
@@ -98,7 +117,7 @@ pub fn ensure_codex_stopped(codex_home: &Path) -> Result<()> {
     };
     if running {
         anyhow::bail!(
-            "Codex is still running. Close the Codex desktop app and all Codex CLI sessions, then retry"
+            "ChatGPT/Codex is still running. Close the desktop app and all Codex CLI sessions, then retry"
         );
     }
     Ok(())
@@ -165,6 +184,23 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         let bundled = PathBuf::from("/Applications/Codex.app/Contents/Resources/codex");
         if bundled.is_file() {
             return Some(bundled);
+        }
+    }
+    #[cfg(windows)]
+    if let Some(local) = env::var_os("LOCALAPPDATA") {
+        let root = PathBuf::from(local).join("OpenAI/Codex/bin");
+        let mut candidates = std::fs::read_dir(root)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.ok()?.path().join("codex.exe");
+                let modified = path.metadata().ok()?.modified().ok()?;
+                Some((modified, path))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        if let Some((_, path)) = candidates.into_iter().next() {
+            return Some(path);
         }
     }
     None

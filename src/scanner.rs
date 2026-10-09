@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -25,6 +25,7 @@ struct DbMetadata {
     approval_mode: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<String>,
+    extra: BTreeMap<String, Value>,
 }
 
 pub fn scan_codex_home(home: &Path, state_db: Option<&Path>) -> Result<Vec<ScannedThread>> {
@@ -92,6 +93,7 @@ fn scan_rollout(
     let mut cli_version = None;
     let mut title = None;
     let mut first_user_message = None;
+    let mut extra = BTreeMap::new();
 
     for (index, line) in reader.lines().enumerate() {
         let line =
@@ -101,6 +103,21 @@ fn scan_rollout(
         match value.get("type").and_then(Value::as_str) {
             Some("session_meta") => {
                 let payload = &value["payload"];
+                for key in [
+                    "history_mode",
+                    "history_base",
+                    "forked_from_id",
+                    "forked_from_ordinal_exclusive",
+                    "parent_thread_id",
+                    "runtime_workspace_roots",
+                    "originator",
+                    "creator_user_id",
+                    "creator_account_id",
+                ] {
+                    if let Some(value) = payload.get(key) {
+                        extra.insert(key.to_owned(), value.clone());
+                    }
+                }
                 id = payload.get("id").and_then(Value::as_str).map(str::to_owned);
                 cwd = payload
                     .get("cwd")
@@ -110,10 +127,12 @@ fn scan_rollout(
                     .get("timestamp")
                     .and_then(Value::as_str)
                     .and_then(parse_timestamp);
-                source = payload
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                source = payload.get("source").map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string())
+                });
                 thread_source = payload
                     .get("thread_source")
                     .and_then(Value::as_str)
@@ -143,6 +162,12 @@ fn scan_rollout(
                         .and_then(Value::as_str)
                         .map(str::to_owned);
                 }
+                if first_user_message.is_none()
+                    && payload.get("type").and_then(Value::as_str) == Some("item_completed")
+                    && payload["item"]["type"].as_str() == Some("UserMessage")
+                {
+                    first_user_message = extract_message_text(&payload["item"]);
+                }
             }
             Some("response_item") if first_user_message.is_none() => {
                 let payload = &value["payload"];
@@ -160,6 +185,12 @@ fn scan_rollout(
         .or_else(|| id_from_filename(path))
         .ok_or_else(|| anyhow!("cannot determine thread id for {}", path.display()))?;
     let metadata = db_metadata.get(&id);
+    if let Some(metadata) = metadata {
+        // Rollout lineage is authoritative; UI-only fields come from the DB.
+        for (key, value) in &metadata.extra {
+            extra.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
     let sha256 = hex::encode(Sha256::digest(&content));
     let relative = path
         .strip_prefix(root)
@@ -215,6 +246,7 @@ fn scan_rollout(
         approval_mode: metadata.and_then(|value| value.approval_mode.clone()),
         model: metadata.and_then(|value| value.model.clone()),
         reasoning_effort: metadata.and_then(|value| value.reasoning_effort.clone()),
+        extra,
     };
     Ok(ScannedThread {
         record,
@@ -273,6 +305,7 @@ fn load_db_metadata(path: &Path) -> Result<HashMap<String, DbMetadata>> {
                 model: row.get(11)?,
                 reasoning_effort: row.get(12)?,
                 thread_source: row.get(13)?,
+                extra: BTreeMap::new(),
             },
         ))
     })?;
@@ -280,6 +313,82 @@ fn load_db_metadata(path: &Path) -> Result<HashMap<String, DbMetadata>> {
     for row in rows {
         let (id, metadata) = row?;
         result.insert(id, metadata);
+    }
+    drop(statement);
+    let extras = [
+        "history_mode",
+        "name",
+        "is_pinned",
+        "originator",
+        "creator_user_id",
+        "creator_account_id",
+        "agent_nickname",
+        "agent_role",
+        "agent_path",
+        "memory_mode",
+        "git_sha",
+        "git_branch",
+        "git_origin_url",
+        "created_at_ms",
+        "updated_at_ms",
+        "project_id",
+        "tokens_used",
+        "has_user_event",
+    ]
+    .into_iter()
+    .filter(|key| columns.iter().any(|column| column == key))
+    .collect::<Vec<_>>();
+    if !extras.is_empty() {
+        let mut stmt =
+            connection.prepare(&format!("SELECT id, {} FROM threads", extras.join(",")))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            if let Some(metadata) = result.get_mut(&id) {
+                for (index, key) in extras.iter().enumerate() {
+                    use rusqlite::types::ValueRef;
+                    let value = match row.get_ref(index + 1)? {
+                        ValueRef::Null => Value::Null,
+                        ValueRef::Integer(n) => Value::from(n),
+                        ValueRef::Real(n) => Value::from(n),
+                        ValueRef::Text(s) => Value::from(String::from_utf8_lossy(s).into_owned()),
+                        ValueRef::Blob(_) => continue,
+                    };
+                    metadata.extra.insert((*key).to_owned(), value);
+                }
+            }
+        }
+    }
+    let projects_exist: bool = connection.query_row(
+        "SELECT count(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('projects','project_roots')",
+        [], |row| row.get(0))?;
+    if projects_exist {
+        let mut stmt = connection.prepare("SELECT id,name,metadata FROM projects")?;
+        let projects = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, name, metadata_json) in projects {
+            let mut roots_stmt = connection
+                .prepare("SELECT path FROM project_roots WHERE project_id=?1 ORDER BY position")?;
+            let roots = roots_stmt
+                .query_map([&id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let project = serde_json::json!({"id": id, "name": name,
+                "metadata": serde_json::from_str::<Value>(&metadata_json).unwrap_or_default(), "roots": roots});
+            for metadata in result.values_mut() {
+                if metadata.extra.get("project_id").and_then(Value::as_str) == Some(id.as_str()) {
+                    metadata
+                        .extra
+                        .insert("source_project".to_owned(), project.clone());
+                }
+            }
+        }
     }
     Ok(result)
 }

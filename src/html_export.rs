@@ -46,13 +46,60 @@ pub fn export_threads(
             safe_name(&thread.record.title),
             &thread.record.id[..thread.record.id.len().min(8)]
         ));
-        fs::write(&output, render_thread(thread)?)?;
+        let expanded = ScannedThread {
+            record: thread.record.clone(),
+            source_path: thread.source_path.clone(),
+            content: visible_history(thread, threads, &mut HashSet::new())?,
+        };
+        fs::write(&output, render_thread(&expanded)?)?;
         files.push(output.to_string_lossy().into_owned());
     }
     Ok(HtmlExportSummary {
         exported: files.len(),
         files,
     })
+}
+
+fn visible_history(
+    thread: &ScannedThread,
+    threads: &[ScannedThread],
+    visiting: &mut HashSet<String>,
+) -> Result<Vec<u8>> {
+    if !visiting.insert(thread.record.id.clone()) {
+        anyhow::bail!(
+            "cyclic history_base during HTML export: {}",
+            thread.record.id
+        );
+    }
+    let mut content = Vec::new();
+    if let Some(id) = thread.record.history_parent() {
+        let parent = threads
+            .iter()
+            .find(|t| t.record.id == id)
+            .ok_or_else(|| anyhow::anyhow!("HTML export requires history_base ancestor {id}"))?;
+        let end = thread.record.extra["history_base"]["end_ordinal_exclusive"]
+            .as_u64()
+            .ok_or_else(|| {
+                anyhow::anyhow!("invalid history_base cutoff for {}", thread.record.id)
+            })?;
+        let bytes = visible_history(parent, threads, visiting)?;
+        for line in bytes.split_inclusive(|b| *b == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let record: Value = serde_json::from_slice(line)?;
+            if record["ordinal"].as_u64().is_some_and(|n| n >= end) {
+                continue;
+            }
+            content.extend_from_slice(line);
+        }
+    }
+    if !content.is_empty() && content.last() != Some(&b'\n') {
+        content.push(b'\n');
+    }
+    content.extend_from_slice(&thread.content);
+    visiting.remove(&thread.record.id);
+    Ok(content)
 }
 
 fn render_thread(thread: &ScannedThread) -> Result<String> {
@@ -70,10 +117,21 @@ fn render_thread(thread: &ScannedThread) -> Result<String> {
                 thread.source_path.display()
             )
         })?;
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        let converted;
+        let payload = if value["type"] == "response_item" {
+            &value["payload"]
+        } else if value["type"] == "event_msg" && value["payload"]["type"] == "item_completed" {
+            let item = &value["payload"]["item"];
+            let role = match item["type"].as_str() {
+                Some("UserMessage") => "user",
+                Some("AgentMessage") => "assistant",
+                _ => continue,
+            };
+            converted = serde_json::json!({"type":"message","role":role,"content":item["content"]});
+            &converted
+        } else {
             continue;
-        }
-        let payload = &value["payload"];
+        };
         match payload.get("type").and_then(Value::as_str) {
             Some("message") => {
                 let Some(role) = payload.get("role").and_then(Value::as_str) else {
@@ -312,6 +370,7 @@ mod tests {
                 approval_mode: None,
                 model: None,
                 reasoning_effort: None,
+                extra: Default::default(),
             },
         };
         let result =
@@ -359,6 +418,7 @@ mod tests {
                 approval_mode: None,
                 model: None,
                 reasoning_effort: None,
+                extra: Default::default(),
             },
         };
         let result =
@@ -398,6 +458,7 @@ mod tests {
                 approval_mode: None,
                 model: None,
                 reasoning_effort: None,
+                extra: Default::default(),
             },
         };
         let result = export_threads(

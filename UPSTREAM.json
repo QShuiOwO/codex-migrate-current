@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/ChenglongLi777/codex-migrate",
+  "base_commit": "37f5300c15447921baf3b98d8ef09d07a3a60008",
+  "base_version": "1.0.8",
+  "local_version": "1.1.0-current.1",
+  "adaptation_date": "2026-10-08",
+  "target_msix_version": "26.1002.7124.0",
+  "tested_native_runtime": "codex-cli 0.162.0-alpha.2",
+  "original_checkout_modified": false
+}
