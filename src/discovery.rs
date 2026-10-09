@@ -165,8 +165,42 @@ fn read_schema_version(path: &Path) -> Result<Option<i64>> {
 }
 
 fn find_executable(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    for directory in env::split_paths(&path) {
+    find_executable_in(
+        name,
+        env::var_os("PATH").as_deref(),
+        env::var_os("LOCALAPPDATA").as_deref(),
+    )
+}
+
+fn find_executable_in(
+    name: &str,
+    path: Option<&std::ffi::OsStr>,
+    _local: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    // Desktop's schema and paginated APIs must use its runtime ahead of a global CLI.
+    #[cfg(windows)]
+    if name == "codex" {
+        if let Some(local) = _local {
+            let root = PathBuf::from(local).join("OpenAI/Codex/bin");
+            let mut candidates = std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| {
+                    let path = entry.ok()?.path().join("codex.exe");
+                    let metadata = path.metadata().ok()?;
+                    if !metadata.is_file() {
+                        return None;
+                    }
+                    Some((metadata.modified().ok()?, path))
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            if let Some((_, path)) = candidates.into_iter().next() {
+                return Some(path);
+            }
+        }
+    }
+    for directory in path.into_iter().flat_map(env::split_paths) {
         let candidate = directory.join(name);
         if candidate.is_file() {
             return Some(candidate);
@@ -186,35 +220,50 @@ fn find_executable(name: &str) -> Option<PathBuf> {
             return Some(bundled);
         }
     }
-    #[cfg(windows)]
-    if let Some(local) = env::var_os("LOCALAPPDATA") {
-        let root = PathBuf::from(local).join("OpenAI/Codex/bin");
-        let mut candidates = std::fs::read_dir(root)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.ok()?.path().join("codex.exe");
-                let modified = path.metadata().ok()?.modified().ok()?;
-                Some((modified, path))
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        if let Some((_, path)) = candidates.into_iter().next() {
-            return Some(path);
-        }
-    }
     None
 }
 
 fn command_version(executable: &Path) -> Result<String> {
-    let output = Command::new(executable)
-        .arg("--version")
+    let mut command = Command::new(executable);
+    command.arg("--version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command
         .output()
         .with_context(|| format!("run {}", executable.display()))?;
     if !output.status.success() {
         return Err(anyhow!("codex --version failed"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_runtime_precedes_path_and_works_without_path() {
+        let root = tempfile::tempdir().unwrap();
+        let desktop = root.path().join("OpenAI/Codex/bin/current/codex.exe");
+        let global = root.path().join("cli/codex.exe");
+        for path in [&desktop, &global] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "synthetic executable").unwrap();
+        }
+        let path = global.parent().unwrap().as_os_str();
+        assert_eq!(
+            find_executable_in("codex", Some(path), Some(root.path().as_os_str())),
+            Some(desktop.clone())
+        );
+        assert_eq!(
+            find_executable_in("codex", None, Some(root.path().as_os_str())),
+            Some(desktop)
+        );
+        assert_eq!(find_executable_in("codex", Some(path), None), Some(global));
+    }
 }
 
 fn is_wsl() -> bool {

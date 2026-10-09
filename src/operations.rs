@@ -295,16 +295,49 @@ pub fn plan_directory_import(
     codex_home: Option<&Path>,
     options: &ImportOptions,
 ) -> Result<ImportPlan> {
+    crate::diagnostics::run(
+        "preview",
+        source,
+        codex_home,
+        options,
+        &mut |_| {},
+        |progress| plan_directory_import_inner(source, codex_home, options, progress),
+    )
+}
+
+fn plan_directory_import_inner(
+    source: &Path,
+    codex_home: Option<&Path>,
+    options: &ImportOptions,
+    progress: &mut dyn FnMut(String),
+) -> Result<ImportPlan> {
     let source_root = resolve_codex_root(source)?;
     let state_db = discovery::find_state_db(&source_root)?;
     let source_threads = scanner::scan_codex_home(&source_root, state_db.as_deref())?;
     let catalog = build_catalog(&source_root, &source_threads);
     let environment = discovery::discover(codex_home)?;
+    report_environment(&environment, progress);
     validate_options(&catalog, options)?;
     merge::build_plan(&catalog, &source_threads, &environment, options)
 }
 
 pub fn import_directory(
+    source: &Path,
+    codex_home: Option<&Path>,
+    options: &ImportOptions,
+    mut progress: impl FnMut(String),
+) -> Result<ImportSummary> {
+    crate::diagnostics::run(
+        "import",
+        source,
+        codex_home,
+        options,
+        &mut progress,
+        |progress| import_directory_inner(source, codex_home, options, progress),
+    )
+}
+
+fn import_directory_inner(
     source: &Path,
     codex_home: Option<&Path>,
     options: &ImportOptions,
@@ -317,6 +350,7 @@ pub fn import_directory(
     let catalog = build_catalog(&source_root, &source_threads);
     validate_options(&catalog, options)?;
     let initial_environment = discovery::discover(codex_home)?;
+    report_environment(&initial_environment, &mut progress);
     discovery::ensure_codex_stopped(&initial_environment.codex_home)?;
     let plan = merge::build_plan(&catalog, &source_threads, &initial_environment, options)?;
     if plan.conflicts > 0 {
@@ -332,6 +366,26 @@ pub fn import_directory(
         &plan,
         &mut progress,
     )
+}
+
+fn report_environment(environment: &Environment, progress: &mut dyn FnMut(String)) {
+    progress(format!(
+        "Runtime={} version={} CODEX_HOME={} CODEX_SQLITE_HOME={} state_db={} schema={:?}",
+        environment
+            .codex_executable
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "not found".into()),
+        environment.codex_version.as_deref().unwrap_or("unknown"),
+        environment.codex_home.display(),
+        environment.sqlite_home.display(),
+        environment
+            .state_db
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "none".into()),
+        environment.schema_version,
+    ));
 }
 
 pub fn verify(codex_home: Option<&Path>) -> Result<VerificationReport> {
@@ -416,6 +470,7 @@ fn execute_import(
         &environment.sqlite_home,
         source_root,
     )?;
+    progress(format!("Transaction={}", transaction.record.id));
     transaction.snapshot_databases(&[
         environment.codex_home.clone(),
         environment.sqlite_home.clone(),
@@ -490,14 +545,7 @@ fn execute_import(
             let mapped_cwd = PathBuf::from(&planned.mapped_cwd);
             match planned.action {
                 MergeAction::SkipIdentical | MergeAction::KeepTargetLonger => {
-                    progress(format!(
-                        "Refreshing Codex index for {}",
-                        if planned.thread.title.is_empty() {
-                            &planned.thread.id
-                        } else {
-                            &planned.thread.title
-                        }
-                    ));
+                    progress(format!("Refreshing Codex index for {}", planned.thread.id));
                     fs::create_dir_all(&mapped_cwd)?;
                     let existing_bytes = fs::read(&target)?;
                     let (rewritten, _) = rollout::rewrite_workspace_bytes(
@@ -528,14 +576,7 @@ fn execute_import(
                 MergeAction::Conflict => unreachable!("conflicts are rejected before import"),
                 MergeAction::Import | MergeAction::ReplaceWithLonger => {}
             }
-            progress(format!(
-                "Importing {}",
-                if planned.thread.title.is_empty() {
-                    &planned.thread.id
-                } else {
-                    &planned.thread.title
-                }
-            ));
+            progress(format!("Importing {}", planned.thread.id));
             let fallback;
             let source_bytes = match source_by_path.get(&planned.source_path) {
                 Some(bytes) => *bytes,
@@ -694,9 +735,12 @@ fn execute_import(
     })();
 
     // New schema families created by this runtime also belong to the rollback.
-    let result = match transaction.track_new_databases() {
-        Ok(()) => result,
-        Err(error) => Err(error.context("record new database families")),
+    let result = match (result, transaction.track_new_databases()) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(error.context("record new database families")),
+        (Err(error), Err(tracking_error)) => Err(error.context(format!(
+            "record new database families also failed: {tracking_error:#}"
+        ))),
     };
 
     let (imported, refreshed, skipped) = match result {

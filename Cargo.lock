@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "codex-migrate"
-version = "1.1.0-current.1"
+version = "1.1.0-current.2"
 dependencies = [
  "anyhow",
  "assert_cmd",

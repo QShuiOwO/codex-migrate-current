@@ -4,6 +4,66 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+/// Only structured metadata paths; conversation text is never inspected for mappings.
+pub fn workspace_paths(content: &[u8]) -> Result<std::collections::BTreeSet<String>> {
+    let mut paths = std::collections::BTreeSet::new();
+    for line in content.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        let value: Value = serde_json::from_slice(line)?;
+        if !matches!(
+            value["type"].as_str(),
+            Some("session_meta" | "turn_context")
+        ) {
+            continue;
+        }
+        let payload = &value["payload"];
+        for key in ["runtime_workspace_roots", "workspace_roots"] {
+            if let Some(roots) = payload[key].as_array() {
+                paths.extend(
+                    roots
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(crate::path_mapper::normalize),
+                );
+            }
+        }
+        let policy = &payload["sandbox_policy"];
+        if let Some(roots) = policy["writable_roots"].as_array() {
+            paths.extend(
+                roots
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(crate::path_mapper::normalize),
+            );
+        }
+        if let Some(entries) = policy["file_system"]["entries"].as_array() {
+            for entry in entries {
+                if entry["path"]["type"] == "path" {
+                    for key in ["path", "value"] {
+                        if let Some(path) = entry["path"][key].as_str() {
+                            paths.insert(crate::path_mapper::normalize(path));
+                        }
+                    }
+                } else if entry["path"]["type"] == "glob_pattern" {
+                    if let Some(pattern) = entry["path"]["pattern"]
+                        .as_str()
+                        .filter(|p| Path::new(p).is_absolute())
+                    {
+                        // Map the directory prefix while preserving the glob suffix.
+                        let prefix = pattern.split(['*', '?', '[']).next().unwrap_or(pattern);
+                        let directory = prefix
+                            .rsplit_once('/')
+                            .map(|(p, _)| p)
+                            .or_else(|| prefix.rsplit_once('\\').map(|(p, _)| p))
+                            .unwrap_or(prefix);
+                        paths.insert(crate::path_mapper::normalize(directory));
+                    }
+                }
+            }
+        }
+    }
+    Ok(paths)
+}
+
 pub fn rewrite_cwd_bytes(content: &[u8], cwd: &Path) -> Result<(Vec<u8>, usize)> {
     rewrite_workspace_bytes(content, cwd, &BTreeMap::new(), false)
 }
@@ -314,6 +374,33 @@ pub fn canonicalize_cwd(content: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_glob_mapping_preserves_file_and_wildcard_restrictions() {
+        let root = tempfile::tempdir().unwrap();
+        let old = crate::path_mapper::normalize(&root.path().join("old").to_string_lossy());
+        let new = crate::path_mapper::normalize(&root.path().join("new").to_string_lossy());
+        for suffix in ["readme.txt", "*.png"] {
+            let pattern = format!("{old}/{suffix}");
+            let content = serde_json::json!({"type":"turn_context","payload":{"cwd":new,"sandbox_policy":{"file_system":{"entries":[{"path":{"type":"glob_pattern","pattern":pattern}}]}}}}).to_string();
+            assert_eq!(
+                workspace_paths(content.as_bytes()).unwrap(),
+                std::collections::BTreeSet::from([old.clone()])
+            );
+            let (mapped, _) = rewrite_workspace_bytes(
+                content.as_bytes(),
+                Path::new(&new),
+                &BTreeMap::from([(old.clone(), new.clone())]),
+                false,
+            )
+            .unwrap();
+            let value: Value = serde_json::from_slice(&mapped).unwrap();
+            assert_eq!(
+                value["payload"]["sandbox_policy"]["file_system"]["entries"][0]["path"]["pattern"],
+                format!("{new}/{suffix}")
+            );
+        }
+    }
 
     #[test]
     fn rewrites_only_structured_cwd_fields() {

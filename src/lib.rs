@@ -1,6 +1,7 @@
 pub mod app_server;
 pub mod cli;
 pub mod desktop_state;
+pub mod diagnostics;
 pub mod discovery;
 pub mod html_export;
 pub mod merge;
