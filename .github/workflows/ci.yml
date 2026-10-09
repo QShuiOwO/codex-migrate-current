@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, chatgpt-compat]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

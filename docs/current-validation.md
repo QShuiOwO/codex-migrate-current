@@ -40,6 +40,14 @@
 
 这些场景运行在 `test-results/` 内的合成数据根；没有读取正式配置、凭据或真实对话，没有调用 `turn/start`，没有发起模型推理。集成脚本的对比关注业务数据库与文件内容，不要求 SQLite 文件的物理字节布局一致。
 
+## 2026-10-09 发布包复核
+
+[GitHub Actions CI](https://github.com/QShuiOwO/codex-migrate-current/actions/runs/37923815341) 使用 Rust 1.99.0、`x86_64-pc-windows-msvc` 完成格式检查、Clippy、33 项测试、GUI/CLI release 构建、230 个已解析依赖的许可收集及打包，全部通过。
+
+下载该构建产物后，核对 ZIP 和两个程序的 SHA-256、原 MIT 许可、依赖/字体许可、Rust 工具链版权文档以及构建提交信息。使用包内 MSVC CLI 再次运行上述 **13 项原生运行时场景，全部通过**；最新汇总记录在 `current-runtime-results.json`，已移除本机输出目录。GUI 在隔离的 `CODEX_HOME` / `CODEX_SQLITE_HOME` 下启动后保持运行，随后关闭测试进程；没有执行完整 GUI 导入。
+
+MSVC 发布程序导入 `VCRUNTIME140.dll`，运行要求为 Microsoft Visual C++ v14 x64 Redistributable；README 给出微软官方下载说明。正式对话、账号配置和凭据仍未参与测试。
+
 ## 验证边界
 
 本记录证明本机版本的原生历史/项目接口与迁移逻辑可以配合工作。没有在真实账号中实际导入，也没有对 GUI 做完整点击验收；没有跨平台集成结果。云端 Chat/Work 历史、附件实体与其他生成物不在本次迁移实现和验证范围。完整说明见 [CURRENT-VERSION.md](../CURRENT-VERSION.md)。

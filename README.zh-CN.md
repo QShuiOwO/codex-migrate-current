@@ -26,7 +26,7 @@
 - `SHA256SUMS.txt`：程序校验值。
 - `LICENSE`、`THIRD_PARTY_NOTICES.txt` 和文档：许可证、署名和使用说明。
 
-Release 程序由 GitHub Actions 使用 Windows MSVC 构建，尚未代码签名。运行前核对 ZIP 的 SHA-256：
+Release 程序由 GitHub Actions 使用 Windows MSVC 构建，尚未代码签名，需要 [Microsoft Visual C++ v14 x64 运行库](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。若提示缺少 `VCRUNTIME140.dll`，安装微软提供的 x64 Redistributable。运行前核对 ZIP 的 SHA-256：
 
 ```powershell
 (Get-FileHash .\Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
@@ -57,7 +57,7 @@ Release 程序由 GitHub Actions 使用 Windows MSVC 构建，尚未代码签名
 
 ## 验证与限制
 
-针对上述运行时，已通过 **33 项 Rust 测试和 13 项合成数据集成场景**，格式检查和 Clippy 也通过。GUI 已构建并做逻辑测试，没有在真实账号中完整点击执行 GUI 导入。详情见 [验证记录](docs/current-validation.md)。
+针对上述运行时，已通过 **33 项 Rust 测试和 13 项合成数据集成场景**，格式检查和 Clippy 也通过。2026-10-09 下载 Actions 的 MSVC 发布包后，也通过了全部 13 项场景，GUI 在隔离目录中启动正常；没有在真实账号中完整点击执行 GUI 导入。详情见 [验证记录](docs/current-validation.md)。
 
 云端账号历史、附件实体、`thread_attachments`、生成物、其他系统和未来运行时均不在本次验证范围。回滚恢复的是迁移前快照，可能覆盖之后新增的对话或修改；应在继续聊天前验收，晚些时候回滚前另做当前备份。
 

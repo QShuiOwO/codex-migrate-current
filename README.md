@@ -26,7 +26,7 @@ Download `Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip` and its `.sha25
 - `SHA256SUMS.txt`: executable checksums.
 - `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and documentation: attribution and usage information.
 
-Release binaries are built by GitHub Actions for Windows MSVC and are unsigned. Compare the ZIP checksum before running them:
+Release binaries are built by GitHub Actions for Windows MSVC and are unsigned. They require the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). If Windows reports a missing `VCRUNTIME140.dll`, install Microsoft's x64 Redistributable. Compare the ZIP checksum before running them:
 
 ```powershell
 (Get-FileHash .\Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
@@ -57,7 +57,7 @@ The tool accepts `.codex`, `Codex_backup`, and the upstream legacy `Codex` backu
 
 ## Validation and limitations
 
-The adaptation passed **33 Rust tests and 13 synthetic integration scenarios** against the runtime listed above; formatting and Clippy also passed. The GUI was built and its logic tested, but a full GUI import into a real account was not performed. Results are in [docs/current-validation.md](docs/current-validation.md).
+The adaptation passed **33 Rust tests and 13 synthetic integration scenarios** against the runtime listed above; formatting and Clippy also passed. The downloaded Actions MSVC package also passed the 13 scenarios on 2026-10-09, and its GUI started successfully with isolated data roots. A full GUI import into a real account was not performed. Results are in [docs/current-validation.md](docs/current-validation.md).
 
 Cloud account history, attachment entities, `thread_attachments`, generated artifacts, other operating systems, and future runtimes are outside this validation. Rollback restores snapshots taken before migration; later chats or edits can be overwritten. Verify the import before resuming chats, and back up current data before a later rollback.
 

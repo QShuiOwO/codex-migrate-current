@@ -54,5 +54,11 @@
       "name": "separate CODEX_SQLITE_HOME and fresh-target rollback",
       "passed": true
     }
-  ]
+  ],
+  "validation_date": "2026-10-09",
+  "build_target": "x86_64-pc-windows-msvc",
+  "ci_run": "https://github.com/QShuiOwO/codex-migrate-current/actions/runs/37923815341",
+  "tested_source_tree": "0b07cc65246bde98b2a599682b25c85b854db1f5",
+  "tested_cli_sha256": "4c4941e9f73fcff45e223026c9e1baaec0623c65664b0365e7ae9441b46eb6c7",
+  "gui_startup_passed": true
 }
