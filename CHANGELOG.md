@@ -4,6 +4,17 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.1] - 2026-10-08 (local compatibility fork)
+
+- Target the unified ChatGPT Desktop native runtime 0.162.0-alpha.2.
+- Preserve paginated metadata, import fork ancestors in dependency order, and rebase byte hints after path mapping.
+- Require native registration and verify all paginated history pages and completed item IDs.
+- Rebuild native projects and thread assignments, including multiple workspace roots.
+- Map structured workspace/permission roots, rebuild affected history projections, and preserve archived state through native APIs.
+- Snapshot all existing SQLite families and track newly created DBs and moved rollouts for rollback.
+- Support completed-message events and inherited fork history in HTML exports.
+- Build Windows CLI/GUI and verify synthetic migrations without touching real user history.
+
 ## [Unreleased]
 
 - Export backups as complete `.codex` directory copies instead of minimal

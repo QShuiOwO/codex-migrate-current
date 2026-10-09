@@ -375,6 +375,7 @@ pub fn list_transactions(codex_home: Option<&Path>) -> Result<Vec<TransactionSum
 
 pub fn rollback(codex_home: Option<&Path>, transaction_id: &str) -> Result<()> {
     let environment = discovery::discover(codex_home)?;
+    discovery::ensure_codex_stopped(&environment.codex_home)?;
     if let Some(state_db) = environment.state_db.as_deref() {
         sqlite_adapter::check_write_lock(state_db)?;
     }
@@ -393,7 +394,17 @@ fn execute_import(
     plan: &ImportPlan,
     progress: &mut impl FnMut(String),
 ) -> Result<ImportSummary> {
-    let environment = ensure_state_database(initial_environment)?;
+    let mut environment = initial_environment.clone();
+    let modern = plan.threads.iter().any(|t| t.thread.paginated())
+        || environment
+            .state_db
+            .as_deref()
+            .map(sqlite_adapter::has_projects)
+            .transpose()?
+            .unwrap_or(false);
+    if environment.codex_executable.is_none() && (modern || environment.state_db.is_none()) {
+        anyhow::bail!("current native Codex runtime is required; set CODEX_MIGRATE_CODEX_BIN to its codex.exe path");
+    }
     fs::create_dir_all(&environment.codex_home)?;
     fs::create_dir_all(&environment.sqlite_home)?;
     if let Some(state_db) = environment.state_db.as_deref() {
@@ -405,18 +416,61 @@ fn execute_import(
         &environment.sqlite_home,
         source_root,
     )?;
-    if let Some(state_db) = environment.state_db.as_deref() {
-        transaction.backup_sqlite_family(state_db)?;
-    }
+    transaction.snapshot_databases(&[
+        environment.codex_home.clone(),
+        environment.sqlite_home.clone(),
+        environment.codex_home.join("sqlite"),
+    ])?;
 
     let result = (|| {
         let staging = transaction.root.join("staging");
         fs::create_dir_all(&staging)?;
-        let existing_by_id =
-            scanner::scan_codex_home(&environment.codex_home, environment.state_db.as_deref())?
-                .into_iter()
-                .map(|thread| (thread.record.id, thread.source_path))
-                .collect::<BTreeMap<_, _>>();
+        let existing_threads =
+            scanner::scan_codex_home(&environment.codex_home, environment.state_db.as_deref())?;
+        let existing_by_id = existing_threads
+            .iter()
+            .map(|thread| (thread.record.id.clone(), thread.source_path.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut invalidated = plan
+            .threads
+            .iter()
+            .filter(|t| t.thread.paginated())
+            .map(|t| t.thread.id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        loop {
+            let before = invalidated.len();
+            for thread in &existing_threads {
+                if thread
+                    .record
+                    .history_parent()
+                    .is_some_and(|id| invalidated.contains(id))
+                {
+                    invalidated.insert(thread.record.id.clone());
+                }
+            }
+            if before == invalidated.len() {
+                break;
+            }
+        }
+        sqlite_adapter::invalidate_history(
+            &environment.sqlite_home.join("thread_history_1.sqlite"),
+            &invalidated,
+        )?;
+        let mut server = match environment.codex_executable.as_deref() {
+            Some(codex) => match app_server::AppServer::start(
+                codex,
+                &environment.codex_home,
+                &environment.sqlite_home,
+            ) {
+                Ok(server) => Some(server),
+                Err(error) if !modern && environment.state_db.is_some() => {
+                    eprintln!("warning: legacy SQLite fallback: {error:#}");
+                    None
+                }
+                Err(error) => return Err(error),
+            },
+            None => None,
+        };
         let source_by_path = source_threads
             .iter()
             .map(|thread| {
@@ -430,6 +484,7 @@ fn execute_import(
         let mut imported = 0;
         let mut refreshed_count = 0;
         let mut skipped = 0;
+        let mut installed = existing_by_id.clone();
         for planned in &plan.threads {
             let target = PathBuf::from(&planned.target_path);
             let mapped_cwd = PathBuf::from(&planned.mapped_cwd);
@@ -445,12 +500,26 @@ fn execute_import(
                     ));
                     fs::create_dir_all(&mapped_cwd)?;
                     let existing_bytes = fs::read(&target)?;
-                    let (_, changed) = rollout::rewrite_cwd_bytes(&existing_bytes, &mapped_cwd)?;
-                    if changed > 0 {
-                        transaction.backup_replaced(&target)?;
-                        rollout::rewrite_cwd_file(&target, &mapped_cwd)?;
+                    let (rewritten, _) = rollout::rewrite_workspace_bytes(
+                        &existing_bytes,
+                        &mapped_cwd,
+                        &plan.mappings,
+                        planned.history_only,
+                    )?;
+                    let rewritten = rollout::rebase_history_offsets(&rewritten, &installed)?;
+                    transaction.backup_replaced(&target)?;
+                    if existing_bytes != rewritten {
+                        fs::write(&target, &rewritten)?;
                     }
-                    register_and_index(&environment, &planned.thread, &target, &mapped_cwd)?;
+                    let actual = register_and_index(
+                        &mut environment,
+                        server.as_mut(),
+                        planned,
+                        &target,
+                        modern,
+                        &plan.mappings,
+                    )?;
+                    installed.insert(planned.thread.id.clone(), actual);
                     indexed_ids.push(planned.thread.id.clone());
                     refreshed_count += 1;
                     skipped += 1;
@@ -467,10 +536,21 @@ fn execute_import(
                     &planned.thread.title
                 }
             ));
-            let source_bytes = source_by_path
-                .get(&planned.source_path)
-                .ok_or_else(|| anyhow!("source rollout disappeared: {}", planned.source_path))?;
-            let (bytes, _) = rollout::rewrite_cwd_bytes(source_bytes, &mapped_cwd)?;
+            let fallback;
+            let source_bytes = match source_by_path.get(&planned.source_path) {
+                Some(bytes) => *bytes,
+                None => {
+                    fallback = fs::read(&planned.source_path)?;
+                    fallback.as_slice()
+                }
+            };
+            let (bytes, _) = rollout::rewrite_workspace_bytes(
+                source_bytes,
+                &mapped_cwd,
+                &plan.mappings,
+                planned.history_only,
+            )?;
+            let bytes = rollout::rebase_history_offsets(&bytes, &installed)?;
             if planned.action == MergeAction::ReplaceWithLonger {
                 if let Some(previous) = existing_by_id.get(&planned.thread.id) {
                     if previous != &target && previous.is_file() {
@@ -497,7 +577,15 @@ fn execute_import(
                 fs::remove_file(&staged)
             })?;
             fs::create_dir_all(&mapped_cwd)?;
-            register_and_index(&environment, &planned.thread, &target, &mapped_cwd)?;
+            let actual = register_and_index(
+                &mut environment,
+                server.as_mut(),
+                planned,
+                &target,
+                modern,
+                &plan.mappings,
+            )?;
+            installed.insert(planned.thread.id.clone(), actual);
             indexed_ids.push(planned.thread.id.clone());
             imported += 1;
         }
@@ -517,13 +605,29 @@ fn execute_import(
                 }
             }
         }
+        let native_projects = environment
+            .state_db
+            .as_deref()
+            .map(sqlite_adapter::has_projects)
+            .transpose()?
+            .unwrap_or(false);
+        if native_projects && !plan.threads.is_empty() {
+            progress("Registering native Desktop projects and thread assignments".to_owned());
+            register_native_projects(
+                &environment,
+                server
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("native project API requires App Server"))?,
+                plan,
+            )?;
+        }
         let projects = plan
             .threads
             .iter()
             .filter(|thread| !thread.history_only)
             .map(|thread| thread.mapped_cwd.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        if !projects.is_empty() {
+        if !native_projects && !projects.is_empty() {
             progress("Registering projects in Codex Desktop".to_owned());
             let state_path = desktop_state::state_path(&environment.codex_home);
             if state_path.exists() {
@@ -534,6 +638,33 @@ fn execute_import(
             desktop_state::register_projects(&state_path, &projects)?;
         }
         progress("Validating imported threads".to_owned());
+        for planned in plan.threads.iter().filter(|t| t.thread.paginated()) {
+            let (turns, items) = server
+                .as_mut()
+                .ok_or_else(|| anyhow!("paginated history requires App Server"))?
+                .verify_history(&planned.thread.id, &installed[&planned.thread.id])?;
+            progress(format!(
+                "Verified paginated history {}: {turns} turns, {items} items",
+                planned.thread.id
+            ));
+        }
+        if let Some(server) = server.as_mut() {
+            for planned in plan.threads.iter().filter(|t| t.thread.archived) {
+                server.request(
+                    "thread/archive",
+                    serde_json::json!({"threadId": planned.thread.id}),
+                )?;
+                let path = sqlite_adapter::thread_rollout_path(
+                    environment
+                        .state_db
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("state DB absent"))?,
+                    &planned.thread.id,
+                )?
+                .ok_or_else(|| anyhow!("archived rollout absent"))?;
+                installed.insert(planned.thread.id.clone(), PathBuf::from(path));
+            }
+        }
         let refreshed = discovery::discover(Some(&environment.codex_home))?;
         validator::verify_expected_threads(&refreshed, indexed_ids)?;
         session_index::verify_contains(
@@ -548,7 +679,7 @@ fn execute_import(
                     Path::new(&planned.mapped_cwd),
                 )?;
                 rollout::validate_cwd_file(
-                    Path::new(&planned.target_path),
+                    &installed[&planned.thread.id],
                     Path::new(&planned.mapped_cwd),
                 )?;
             }
@@ -557,9 +688,16 @@ fn execute_import(
                 anyhow::bail!("SQLite integrity check returned {integrity}");
             }
         }
-        let _ = validator::run_codex_doctor(&refreshed);
+        // Drop releases all native DB handles before success or rollback.
+        drop(server);
         Ok((imported, refreshed_count, skipped))
     })();
+
+    // New schema families created by this runtime also belong to the rollback.
+    let result = match transaction.track_new_databases() {
+        Ok(()) => result,
+        Err(error) => Err(error.context("record new database families")),
+    };
 
     let (imported, refreshed, skipped) = match result {
         Ok(result) => result,
@@ -585,57 +723,197 @@ fn execute_import(
 }
 
 fn register_and_index(
-    environment: &Environment,
-    thread: &crate::model::ThreadRecord,
+    environment: &mut Environment,
+    mut server: Option<&mut app_server::AppServer>,
+    planned: &crate::model::PlannedThread,
     rollout_path: &Path,
-    cwd: &Path,
-) -> Result<()> {
-    let app_server_result = environment
-        .codex_executable
-        .as_deref()
+    modern: bool,
+    mappings: &BTreeMap<String, String>,
+) -> Result<PathBuf> {
+    let thread = &planned.thread;
+    let cwd = Path::new(&planned.mapped_cwd);
+    let history_only = planned.history_only;
+    let first = fs::read_to_string(rollout_path)?
+        .lines()
+        .next()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .transpose()?
+        .unwrap_or_default();
+    let roots = first["payload"]["runtime_workspace_roots"]
+        .as_array()
+        .map(|roots| {
+            roots
+                .iter()
+                .filter_map(|r| r.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| vec![cwd.to_string_lossy().into_owned()]);
+    let mut actual = rollout_path.to_path_buf();
+    let mut record = thread.clone();
+    if thread.archived {
+        if let Some(server) = server.as_mut() {
+            let refreshed = discovery::discover(Some(&environment.codex_home))?;
+            let database = refreshed
+                .state_db
+                .as_deref()
+                .ok_or_else(|| anyhow!("runtime did not initialize the state DB"))?;
+            sqlite_adapter::upsert_thread(database, thread, rollout_path, cwd)?;
+            let result = server.request(
+                "thread/unarchive",
+                serde_json::json!({"threadId":thread.id}),
+            )?;
+            actual = PathBuf::from(
+                result["thread"]["path"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("thread/unarchive returned no path"))?,
+            );
+            record.archived = false;
+        }
+    }
+    let app_server_result = server
         .ok_or_else(|| anyhow!("Codex executable was not found"))
-        .and_then(|codex| {
-            app_server::register_thread(
-                codex,
-                &environment.codex_home,
-                rollout_path,
-                &thread.id,
-                cwd,
-            )
-        });
+        .and_then(|server| server.register(&actual, &thread.id, cwd, &roots, thread.paginated()));
     let refreshed = discovery::discover(Some(&environment.codex_home))?;
     let state_db = refreshed
         .state_db
         .as_deref()
         .ok_or_else(|| anyhow!("state database was not found"))?;
     if let Err(error) = app_server_result {
+        if modern || thread.paginated() || sqlite_adapter::has_projects(state_db)? {
+            return Err(
+                error.context("native registration is mandatory for current history/projects")
+            );
+        }
         eprintln!(
             "warning: App Server registration failed for {}; using SQLite fallback: {error:#}",
             thread.id
         );
     }
-    sqlite_adapter::upsert_thread(state_db, thread, rollout_path, cwd)
+    if let Some(policy) = &record.sandbox_policy {
+        if let Ok(mut policy) = serde_json::from_str::<serde_json::Value>(policy) {
+            let mut effective = mappings.clone();
+            effective
+                .entry(normalize(&thread.cwd))
+                .or_insert(cwd.to_string_lossy().into_owned());
+            rollout::rewrite_policy_roots(
+                &mut policy,
+                &effective,
+                &cwd.to_string_lossy(),
+                history_only,
+            )?;
+            record.sandbox_policy = Some(policy.to_string());
+        }
+    }
+    sqlite_adapter::upsert_thread(state_db, &record, &actual, cwd)?;
+    *environment = refreshed;
+    Ok(actual)
 }
 
-fn ensure_state_database(environment: &Environment) -> Result<Environment> {
-    if environment.state_db.is_some() {
-        return Ok(environment.clone());
+fn register_native_projects(
+    environment: &Environment,
+    server: &mut app_server::AppServer,
+    plan: &ImportPlan,
+) -> Result<()> {
+    use serde_json::{json, Value};
+    let mut groups = BTreeMap::<String, Vec<&crate::model::PlannedThread>>::new();
+    for thread in plan.threads.iter().filter(|t| t.history_only) {
+        server.request(
+            "thread/metadata/update",
+            json!({"threadId": thread.thread.id, "projectId": ""}),
+        )?;
     }
-    let codex = environment
-        .codex_executable
-        .as_deref()
-        .ok_or_else(|| anyhow!("Codex executable was not found and state DB is absent"))?;
-    let _ = std::process::Command::new(codex)
-        .args(["doctor", "--json"])
-        .env("CODEX_HOME", &environment.codex_home)
-        .output();
-    let refreshed = discovery::discover(Some(&environment.codex_home))?;
-    if refreshed.state_db.is_none() {
-        return Err(anyhow!(
-            "Codex state DB is absent; launch Codex once on the target device, then retry"
+    for thread in plan.threads.iter().filter(|t| {
+        !t.history_only
+            && t.thread
+                .extra
+                .get("_migrate_existing_dependency")
+                .and_then(Value::as_bool)
+                != Some(true)
+    }) {
+        let project = thread.thread.extra.get("source_project");
+        let key = project
+            .and_then(|p| p["id"].as_str())
+            .map(|id| format!("project:{id}"))
+            .unwrap_or_else(|| format!("cwd:{}", normalize(&thread.mapped_cwd)));
+        groups.entry(key).or_default().push(thread);
+    }
+    for (key, members) in groups {
+        let first = members[0];
+        let source_project = first.thread.extra.get("source_project");
+        let name = source_project
+            .and_then(|p| p["name"].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                Path::new(&first.mapped_cwd)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Migrated project".to_owned())
+            });
+        let mut effective = plan.mappings.clone();
+        for member in &members {
+            effective
+                .entry(normalize(&member.thread.cwd))
+                .or_insert(member.mapped_cwd.clone());
+        }
+        let source_roots = source_project
+            .and_then(|p| p["roots"].as_array())
+            .cloned()
+            .unwrap_or_else(|| vec![json!(first.thread.cwd)]);
+        let mut roots = Vec::new();
+        for root in source_roots.iter().filter_map(Value::as_str) {
+            let mapped = map_explicit(root, &effective, &environment.platform)
+                .or_else(|| Path::new(root).is_dir().then(|| PathBuf::from(root)))
+                .ok_or_else(|| anyhow!("source project root requires a mapping: {root}"))?;
+            if !mapped.is_absolute() {
+                anyhow::bail!("project root must be absolute: {}", mapped.display());
+            }
+            let path = mapped.to_string_lossy().into_owned();
+            if !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+        if roots.is_empty() {
+            roots.push(first.mapped_cwd.clone());
+        }
+        let ids = members
+            .iter()
+            .map(|t| t.thread.id.clone())
+            .collect::<Vec<_>>();
+        let metadata = source_project
+            .and_then(|p| p.get("metadata"))
+            .filter(|v| v.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        // Include mapped roots in the key: rebind creates/uses the destination
+        // project instead of mutating unrelated members of the source project.
+        let digest = hex::encode(Sha256::digest(
+            format!("{key}|{}", roots.join("|")).as_bytes(),
         ));
+        let result = server.request("project/import", json!({"idempotencyKey": format!("codex-migrate-v2-{digest}"), "name": name,
+            "roots": roots.iter().map(|p| json!({"path": p})).collect::<Vec<_>>(), "metadata": metadata, "threads": ids}))?;
+        let project_id = result["project"]["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("project/import returned no project ID"))?;
+        // An idempotent import can return an existing project. Explicitly assign
+        // every selected thread so repeated imports with a larger selection work.
+        for id in &ids {
+            server.request(
+                "thread/metadata/update",
+                json!({"threadId": id, "projectId": project_id}),
+            )?;
+        }
+        sqlite_adapter::validate_project(
+            environment
+                .state_db
+                .as_deref()
+                .ok_or_else(|| anyhow!("state DB absent"))?,
+            project_id,
+            &ids,
+            &roots,
+        )?;
     }
-    Ok(refreshed)
+    Ok(())
 }
 
 fn validate_options(catalog: &SourceCatalog, options: &ImportOptions) -> Result<()> {

@@ -1,0 +1,64 @@
+{
+  "runtime": "codex-cli 0.162.0-alpha.2",
+  "cases": [
+    {
+      "name": "dry-run and ancestor closure",
+      "passed": true
+    },
+    {
+      "name": "fresh target, paginated fork, native multiroot project, source unchanged",
+      "passed": true
+    },
+    {
+      "name": "paginated fork HTML includes ancestor messages",
+      "passed": true
+    },
+    {
+      "name": "repeat import without duplicate histories/projects",
+      "passed": true
+    },
+    {
+      "name": "rebind cached paginated fork and full manual rollback",
+      "passed": true
+    },
+    {
+      "name": "history item pagination beyond first 100 items",
+      "passed": true,
+      "items": 205
+    },
+    {
+      "name": "missing ancestor rejected before mutation",
+      "passed": true
+    },
+    {
+      "name": "native registration failure rolls back all DBs and rollouts",
+      "passed": true
+    },
+    {
+      "name": "legacy history preserved under current runtime",
+      "passed": true
+    },
+    {
+      "name": "paginated migration without runtime rejected before writes",
+      "passed": true
+    },
+    {
+      "name": "archived paginated thread stays archived and readable",
+      "passed": true
+    },
+    {
+      "name": "history-only fork uses stub workspace without native project",
+      "passed": true
+    },
+    {
+      "name": "separate CODEX_SQLITE_HOME and fresh-target rollback",
+      "passed": true
+    }
+  ],
+  "validation_date": "2026-10-09",
+  "build_target": "x86_64-pc-windows-msvc",
+  "ci_run": "https://github.com/QShuiOwO/codex-migrate-current/actions/runs/37923815341",
+  "tested_source_tree": "0b07cc65246bde98b2a599682b25c85b854db1f5",
+  "tested_cli_sha256": "4c4941e9f73fcff45e223026c9e1baaec0623c65664b0365e7ae9441b46eb6c7",
+  "gui_startup_passed": true
+}

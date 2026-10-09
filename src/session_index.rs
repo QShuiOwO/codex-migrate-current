@@ -143,6 +143,7 @@ mod tests {
                 approval_mode: None,
                 model: None,
                 reasoning_effort: None,
+                extra: Default::default(),
             },
             source_path: String::new(),
             mapped_cwd: "/new".to_owned(),

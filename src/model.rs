@@ -32,6 +32,22 @@ pub struct ThreadRecord {
     pub approval_mode: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
+    /// Version-dependent metadata, including paginated lineage and source project.
+    #[serde(default)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl ThreadRecord {
+    pub fn paginated(&self) -> bool {
+        self.extra
+            .get("history_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("paginated")
+    }
+
+    pub fn history_parent(&self) -> Option<&str> {
+        self.extra.get("history_base")?.get("thread_id")?.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +132,10 @@ pub struct ImportPlan {
     pub codex_home: String,
     pub threads: Vec<PlannedThread>,
     pub conflicts: usize,
+    #[serde(default)]
+    pub dependency_thread_ids: Vec<String>,
+    #[serde(default)]
+    pub mappings: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

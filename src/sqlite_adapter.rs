@@ -127,7 +127,122 @@ pub fn upsert_thread(
     } else {
         insert_thread(&transaction, &columns, thread, rollout_path, cwd)?;
     }
+    // Only explicit, schema-checked scalar fields. Project IDs are rebound by
+    // the native project API; source machine foreign keys are never copied.
+    for key in [
+        "history_mode",
+        "name",
+        "is_pinned",
+        "originator",
+        "creator_user_id",
+        "creator_account_id",
+        "agent_nickname",
+        "agent_role",
+        "agent_path",
+        "memory_mode",
+        "git_sha",
+        "git_branch",
+        "git_origin_url",
+        "created_at_ms",
+        "updated_at_ms",
+        "tokens_used",
+        "has_user_event",
+    ] {
+        if !columns.contains(key) {
+            continue;
+        }
+        if let Some(value) = thread.extra.get(key) {
+            let value = match value {
+                serde_json::Value::String(s) => Value::Text(s.clone()),
+                serde_json::Value::Number(n) if n.as_i64().is_some() => {
+                    Value::Integer(n.as_i64().unwrap())
+                }
+                serde_json::Value::Bool(b) => Value::Integer(*b as i64),
+                serde_json::Value::Null
+                    if matches!(
+                        key,
+                        "name"
+                            | "creator_user_id"
+                            | "creator_account_id"
+                            | "originator"
+                            | "agent_nickname"
+                            | "agent_role"
+                            | "agent_path"
+                            | "git_sha"
+                            | "git_branch"
+                            | "git_origin_url"
+                    ) =>
+                {
+                    Value::Null
+                }
+                _ => continue,
+            };
+            transaction.execute(
+                &format!("UPDATE threads SET {key}=?1 WHERE id=?2"),
+                rusqlite::params![value, thread.id],
+            )?;
+        }
+    }
     transaction.commit()?;
+    Ok(())
+}
+
+pub fn has_projects(path: &Path) -> Result<bool> {
+    table_exists(&open_readable(path)?, "projects")
+}
+
+pub fn invalidate_history(path: &Path, ids: &std::collections::BTreeSet<String>) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    let transaction = connection.transaction()?;
+    for table in [
+        "thread_items",
+        "thread_turns",
+        "thread_history_projection_state",
+        "projection_state",
+    ] {
+        if !table_exists(&transaction, table)? {
+            continue;
+        }
+        for id in ids {
+            transaction.execute(&format!("DELETE FROM {table} WHERE thread_id=?1"), [id])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+pub fn validate_project(path: &Path, id: &str, threads: &[String], roots: &[String]) -> Result<()> {
+    let connection = open_readable(path)?;
+    for thread in threads {
+        let project_id: Option<String> = connection.query_row(
+            "SELECT project_id FROM threads WHERE id=?1",
+            [thread],
+            |row| row.get(0),
+        )?;
+        if project_id.as_deref() != Some(id) {
+            anyhow::bail!("thread {thread} was not assigned to project {id}");
+        }
+    }
+    let mut stmt = connection
+        .prepare("SELECT path FROM project_roots WHERE project_id=?1 ORDER BY position")?;
+    let actual = stmt
+        .query_map([id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if actual
+        .iter()
+        .map(|s| crate::path_mapper::normalize(s))
+        .collect::<Vec<_>>()
+        != roots
+            .iter()
+            .map(|s| crate::path_mapper::normalize(s))
+            .collect::<Vec<_>>()
+    {
+        anyhow::bail!("project {id} has incorrect workspace roots");
+    }
     Ok(())
 }
 
@@ -203,6 +318,12 @@ fn update_thread(
         ),
     );
     add("model_provider", Value::Text(thread.model_provider.clone()));
+    if let Some(policy) = &thread.sandbox_policy {
+        add("sandbox_policy", Value::Text(policy.clone()));
+    }
+    if let Some(mode) = &thread.approval_mode {
+        add("approval_mode", Value::Text(mode.clone()));
+    }
     add("archived", Value::Integer(thread.archived as i64));
     add(
         "archived_at",

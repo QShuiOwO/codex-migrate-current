@@ -1,169 +1,86 @@
-<p align="center">
-  <img src="assets/icons/codex-migrate-512.png" width="112" alt="Codex Migrate 图标">
-</p>
+# Codex Migrate Current
 
-<h1 align="center">Codex Migrate</h1>
+[English](README.md) · [下载](https://github.com/QShuiOwO/codex-migrate-current/releases) · [验证记录](docs/current-validation.md)
 
-<p align="center">
-  本地优先的跨平台 Codex 会话迁移、路径修复、备份与 HTML 导出工具。
-</p>
+这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的社区 Fork，用于迁移 **ChatGPT Desktop 中本地 Codex 代码对话**。上游基线为 v1.0.8、提交 `37f5300c15447921baf3b98d8ef09d07a3a60008`；保留原仓库提交历史、署名和 MIT 许可证。本项目与 OpenAI 不存在隶属或官方背书关系。
 
-<p align="center">
-  <a href="README.md">English</a> ·
-  <a href="#下载安装">下载安装</a> ·
-  <a href="#安全与回滚">安全与回滚</a> ·
-  <a href="CONTRIBUTING.md">参与贡献</a>
-</p>
+当前版本 **1.1.0-current.1** 为 **Windows x64 预发布版**。2026-10-08 验证的适配目标是 ChatGPT Desktop MSIX `OpenAI.Codex 26.1002.7124.0`，配套原生运行时为 `codex-cli 0.162.0-alpha.2`。不支持迁移 Chat/Work 云端账号历史。
 
-> [!IMPORTANT]
-> Codex Migrate 是独立的社区项目，与 OpenAI 不存在隶属、赞助或官方背书关系。“Codex”及其他 OpenAI 标识归 OpenAI 所有。
+## 更新内容
 
-Codex Migrate 可以直接读取旧设备复制出来的 `.codex/`，也兼容旧版生成的
-精简 `Codex/` 文件夹。新版备份会将 `.codex/` 完整复制到可见的
-`Codex_backup/` 文件夹。导入时程序以 rollout JSONL 为会话事实来源，将用户
-选中的会话安全合并到已有的本机 Codex 环境。
+- 识别新版分页历史和消息完成事件。
+- 自动补齐分叉对话祖先，重算父历史改写后的字节边界。
+- 通过原生 App Server 重建项目、多根工作区、对话名称和归档状态。
+- 刷新受影响的历史显示缓存，遍历全部分页并校验已完成消息。
+- 备份 SQLite 数据库、rollout 和索引；原生注册失败时自动回滚。
+- 保留 legacy 历史，HTML 导出包含分叉祖先消息。
 
-## 软件截图
-
-<p align="center">
-  <img src="docs/screenshots/app-overview.png" width="920" alt="Codex Migrate 软件界面总览">
-</p>
-
-<table>
-  <tr>
-    <td width="68%">
-      <img src="docs/screenshots/migration-workflow.png" alt="三步会话迁移流程">
-    </td>
-    <td width="32%">
-      <img src="docs/screenshots/feature-navigation.png" alt="迁移、备份、路径修复、HTML 导出、回滚和设置导航">
-    </td>
-  </tr>
-  <tr>
-    <td align="center">三步迁移流程</td>
-    <td align="center">迁移与维护功能入口</td>
-  </tr>
-</table>
-
-## 主要功能
-
-- 支持 macOS、Windows、Linux 和 WSL 之间迁移活动及归档会话。
-- 按项目和会话单独选择要导入的内容。
-- 将旧设备项目路径映射到新设备的真实文件夹。
-- 通过父目录映射批量匹配多个项目。
-- 修复本机现有 `.codex` 会话中的项目路径。
-- 检测重复、完整前缀版本及同 UUID 分叉冲突。
-- 写入前创建回滚快照，并可在 GUI 中批量删除旧快照。
-- 将会话导出为单文件 HTML，内嵌用户图片和工具截图。
-- 中英文原生 GUI，默认跟随系统语言。
-- GUI 和 CLI 共用同一套迁移核心。
-
-## 备份内容
-
-备份功能会将所选 Codex 主目录下的全部文件和文件夹复制到：
-
-```text
-所选目录/
-└── Codex_backup/
-```
-
-其中包括活动及归档会话、SQLite 数据库、Skills、配置、插件、日志、缓存、回滚记录，
-以及来源目录中的其他内容。根目录下的 `auth.json` 等登录凭据文件会被明确排除。
-
-> [!WARNING]
-> 即使不包含登录凭据，完整备份仍会包含私密对话、命令输出、图片、本机路径、
-> 配置和日志。请妥善保管，不要公开分享。导出前应完全关闭 Codex，确保数据库及
-> WAL 文件复制一致。
+命令行和中英文 GUI 共用更新后的迁移引擎。完整细节见 [CURRENT-VERSION.md](CURRENT-VERSION.md)。
 
 ## 下载安装
 
-在 GitHub 仓库的 **Releases** 页面下载对应平台版本：
+从 [本 Fork 的 Releases](https://github.com/QShuiOwO/codex-migrate-current/releases) 下载 `Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip` 及对应 `.sha256` 文件，解压后：
 
-- Windows：解压 ZIP，运行 `Codex Migrate.exe`。
-- macOS：解压 ZIP，将 `Codex Migrate.app` 移入“应用程序”。首次启动时按住
-  Control 点击应用并选择“打开”；如果仍被阻止，请前往“系统设置 → 隐私与安全性”
-  点击“仍要打开”。
-- Linux：解压压缩包，运行 `codex-migrate-gui`。
+- `codex-migrate-gui.exe`：图形界面。
+- `codex-migrate.exe`：命令行。
+- `SHA256SUMS.txt`：程序校验值。
+- `LICENSE`、`THIRD_PARTY_NOTICES.txt` 和文档：许可证、署名和使用说明。
 
-当前发布包没有使用商业代码签名证书，也未经过 Apple 公证。Windows SmartScreen
-或 macOS Gatekeeper 可能显示提示。运行下载程序前请核对 Release 中的 SHA-256
-校验文件。
+Release 程序由 GitHub Actions 使用 Windows MSVC 构建，尚未代码签名，需要 [Microsoft Visual C++ v14 x64 运行库](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。若提示缺少 `VCRUNTIME140.dll`，安装微软提供的 x64 Redistributable。运行前核对 ZIP 的 SHA-256：
+
+```powershell
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+```
+
+上游的 macOS/Linux 源码支持仍保留；本次适配没有这些平台的同等集成验证，也不提供对应发布包。
+
+## 使用流程
+
+1. 备份源 `.codex`，备份包含对话和配置，应妥善保管。
+2. 实际导入或回滚前，完全退出 ChatGPT Desktop 和所有 Codex CLI 会话。
+3. 扫描备份，选择对话，映射全部工作区根，审阅 dry-run 计划。分叉祖先可能自动加入选择。
+4. 执行导入，检查结果后再继续聊天，保留工具输出的事务 ID。
+
+工具接受 `.codex`、`Codex_backup` 和上游旧版精简 `Codex` 目录，不会复制项目源码。分页历史必须使用与桌面应用配套的 `codex.exe`。程序自动寻找 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`；必要时通过 `CODEX_MIGRATE_CODEX_BIN` 显式指定。
+
+```powershell
+.\codex-migrate.exe scan 'D:\Backup\Codex_backup'
+.\codex-migrate.exe import 'D:\Backup\Codex_backup' `
+  --thread '实际对话UUID' --map 'C:\旧项目=D:\新项目' --dry-run
+
+# 审阅计划后，去掉 --dry-run 执行实际迁移。
+# 多根工作区为每个根增加 --map。
+.\codex-migrate.exe rollback '实际事务ID'
+```
+
+`--history-only '旧cwd'` 创建历史占位目录，不注册实际项目。`--codex-home` 指定目标历史目录；若存在 `CODEX_SQLITE_HOME`，还必须核对它，因为该变量独立指定数据库目录。先试迁移时，将两者都设为隔离目录。全部命令可运行 `codex-migrate --help` 查看。
+
+## 验证与限制
+
+针对上述运行时，已通过 **33 项 Rust 测试和 13 项合成数据集成场景**，格式检查和 Clippy 也通过。2026-10-09 下载 Actions 的 MSVC 发布包后，也通过了全部 13 项场景，GUI 在隔离目录中启动正常；没有在真实账号中完整点击执行 GUI 导入。详情见 [验证记录](docs/current-validation.md)。
+
+云端账号历史、附件实体、`thread_attachments`、生成物、其他系统和未来运行时均不在本次验证范围。回滚恢复的是迁移前快照，可能覆盖之后新增的对话或修改；应在继续聊天前验收，晚些时候回滚前另做当前备份。
 
 ## 从源码构建
 
-需要 Rust stable 工具链，以及 `eframe` 所需的平台构建环境。
-
-```bash
-git clone https://github.com/ChenglongLi777/codex-migrate.git
-cd codex-migrate
-cargo test --all-targets --features gui
-cargo build --release --features gui --bins
+```powershell
+git clone https://github.com/QShuiOwO/codex-migrate-current.git
+cd codex-migrate-current
+cargo test --locked --all-targets --features gui
+cargo build --locked --release --features gui --bins
 ```
 
-macOS 应用打包：
+验证使用 Rust 1.99.0；Windows 还需要兼容的 C/C++ 工具链。可选的运行时测试使用 Python 3.11+，仅生成合成数据：
 
-```bash
-./scripts/package-macos.sh
+```powershell
+python .\tests\current_runtime.py --codex-bin 'C:\实际运行时\codex.exe' `
+  --migrate-bin "$PWD\target\release\codex-migrate.exe"
 ```
 
-## GUI 使用流程
+Actions 负责 Windows 测试、第三方许可收集及打包。版本标签先创建预发布草稿，完成检查后通过工作流的 `publish` 输入发布。维护流程见 [docs/publishing.md](docs/publishing.md)。
 
-1. 完全退出 Codex Desktop 和所有 Codex CLI 会话。
-2. 选择旧设备 `.codex/`、`Codex_backup/`、旧版精简 `Codex/`，或只包含其中一个目录的父目录。
-3. 选择需要导入的项目与会话。
-4. 为每个已选项目绑定新设备文件夹、应用父目录映射，或选择“仅恢复历史”。
-5. 预览新增、重复、较长版本及冲突。
-6. 确认导入，完成后重新打开 Codex。
+## 许可证与来源
 
-## 合并规则
+[MIT](LICENSE)，保留原声明 `Copyright (c) 2026 codex-migrate contributors`；本 Fork 的修改同样按 MIT 发布。来源见 [UPSTREAM.json](UPSTREAM.json)，二进制依赖和字体许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-| 来源与目标状态 | 处理方式 |
-| --- | --- |
-| 目标不存在 UUID | 导入 |
-| UUID 和内容哈希一致 | 跳过并刷新索引 |
-| 目标 rollout 是来源的完整前缀 | 使用较长来源 |
-| 来源 rollout 是目标的完整前缀 | 保留较长目标 |
-| 同 UUID 内容分叉 | 停止并报告冲突 |
-
-程序不会拼接分叉 JSONL，也不会静默生成新 UUID。
-
-## 安全与回滚
-
-- 检查目标 SQLite 是否正被占用。
-- 使用 SQLite Online Backup 创建数据库快照。
-- rollout 文件先进入 staging，再移动到目标目录。
-- 只更新运行时检测到的数据库字段。
-- 导入失败时自动恢复快照。
-- 回滚数据保存在：
-
-```text
-$CODEX_HOME/migration_transactions/<事务ID>/
-```
-
-删除回滚数据只会删除所选备份目录，不会修改当前会话。
-
-## 常用 CLI 命令
-
-```bash
-codex-migrate export ~/.codex --output-parent ~/Backups
-codex-migrate scan ~/Backups/Codex_backup
-
-codex-migrate import ~/Backups/Codex_backup --dry-run \
-  --map '/Users/alex/Projects=D:/Projects'
-
-codex-migrate rebind --codex-home ~/.codex \
-  --map '/旧项目父目录=/新项目父目录' --dry-run
-
-codex-migrate export-html --codex-home ~/.codex --thread THREAD_ID
-codex-migrate verify
-codex-migrate rollback TRANSACTION_ID
-```
-
-完整参数请运行 `codex-migrate --help`。
-
-## 项目状态
-
-本工具依赖 Codex 本地存储结构，而这些结构可能随 Codex 版本变化。欢迎提交兼容性问题和修复。提交 Issue 前，请从日志和截图中删除对话内容、凭据、用户名和私有路径。
-
-## 许可证
-
-MIT，详见 [LICENSE](LICENSE)。
+问题请提交至 [本 Fork 的 Issues](https://github.com/QShuiOwO/codex-migrate-current/issues)。报告前删除私密对话、凭据和路径，不要上传完整 `.codex`。其他说明见 [CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md) 和 [TRADEMARKS.md](TRADEMARKS.md)。

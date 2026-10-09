@@ -1,187 +1,86 @@
-<p align="center">
-  <img src="assets/icons/codex-migrate-512.png" width="112" alt="Codex Migrate icon">
-</p>
+# Codex Migrate Current
 
-<h1 align="center">Codex Migrate</h1>
+[简体中文](README.zh-CN.md) · [Downloads](https://github.com/QShuiOwO/codex-migrate-current/releases) · [Validation](docs/current-validation.md)
 
-<p align="center">
-  A local-first, cross-platform tool for migrating, repairing, backing up, and exporting Codex sessions.
-</p>
+A community fork of [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate), updated to migrate **local Codex code chats in ChatGPT Desktop**. The upstream baseline is v1.0.8, commit `37f5300c15447921baf3b98d8ef09d07a3a60008`. This fork retains the upstream history, attribution, and MIT license. It is not affiliated with or endorsed by OpenAI.
 
-<p align="center">
-  <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="#installation">Installation</a> ·
-  <a href="#safety">Safety</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
-</p>
+Version **1.1.0-current.1** is a **Windows x64 prerelease**. Compatibility was checked on 2026-10-08 against ChatGPT Desktop MSIX `OpenAI.Codex 26.1002.7124.0` and its native runtime `codex-cli 0.162.0-alpha.2`. It does not migrate cloud Chat/Work account history.
 
-> [!IMPORTANT]
-> Codex Migrate is an independent community project. It is not affiliated with, endorsed by, or sponsored by OpenAI. “Codex” and other OpenAI marks belong to OpenAI.
+## What changed
 
-Codex Migrate works directly with a copied `.codex/` directory or a legacy
-minimal `Codex/` backup. New backups are complete copies stored in a visible
-`Codex_backup/` folder.
-The importer uses rollout JSONL files as the source of truth and can merge
-selected sessions into an existing local Codex environment.
+- Recognizes paginated history and completed message events.
+- Includes fork ancestors automatically and recalculates rewritten parent byte offsets.
+- Imports native projects, multiple workspace roots, thread names, and archived chats through the matching App Server.
+- Refreshes affected history projections and verifies every page of completed messages.
+- Snapshots SQLite databases, rollouts, and indexes; native registration failures trigger rollback.
+- Preserves legacy history and includes fork ancestors in HTML exports.
 
-## Screenshots
+The CLI and bilingual GUI share the updated migration engine. See [CURRENT-VERSION.md](CURRENT-VERSION.md) for detailed adaptation notes in Chinese.
 
-<p align="center">
-  <img src="docs/screenshots/app-overview.png" width="920" alt="Codex Migrate application overview">
-</p>
+## Download
 
-<table>
-  <tr>
-    <td width="68%">
-      <img src="docs/screenshots/migration-workflow.png" alt="Three-step session migration workflow">
-    </td>
-    <td width="32%">
-      <img src="docs/screenshots/feature-navigation.png" alt="Migration, backup, path repair, HTML export, rollback, and settings navigation">
-    </td>
-  </tr>
-  <tr>
-    <td align="center">Three-step migration workflow</td>
-    <td align="center">Migration and maintenance tools</td>
-  </tr>
-</table>
+Download `Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip` and its `.sha256` file from [this fork's Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Extract the archive:
 
-## Features
+- `codex-migrate-gui.exe`: graphical application.
+- `codex-migrate.exe`: command-line application.
+- `SHA256SUMS.txt`: executable checksums.
+- `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and documentation: attribution and usage information.
 
-- Migrate active and archived sessions across macOS, Windows, Linux, and WSL.
-- Select individual projects and sessions before importing.
-- Map old project paths to folders on the new device.
-- Apply parent-directory mappings to many projects at once.
-- Repair project paths in an existing `.codex` directory.
-- Detect identical, prefix-compatible, and divergent session UUIDs.
-- Create rollback snapshots before writes and delete old snapshots from the GUI.
-- Export selected conversations as self-contained HTML, including embedded user images and tool screenshots.
-- Use a native GUI in Chinese or English, following the system language by default.
-- Use the same migration engine from the command line.
+Release binaries are built by GitHub Actions for Windows MSVC and are unsigned. They require the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). If Windows reports a missing `VCRUNTIME140.dll`, install Microsoft's x64 Redistributable. Compare the ZIP checksum before running them:
 
-## Backup contents
-
-The backup exporter copies every file and directory under the selected Codex
-home into:
-
-```text
-selected-folder/
-└── Codex_backup/
+```powershell
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.1-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
-This includes sessions, archived sessions, SQLite databases, Skills,
-configuration, plugins, logs, caches, rollback records, and other contents
-present in the source directory. Root-level login credential files such as
-`auth.json` are intentionally excluded.
+macOS/Linux source support is inherited from upstream, but this adaptation has no equivalent integration validation or binary releases for those platforms.
 
-> [!WARNING]
-> Although login credential files are excluded, a complete backup still
-> contains private conversations, commands, output, images, local paths,
-> configuration, and logs. Keep it private and protected. Quit Codex before
-> exporting so database and WAL files are copied consistently.
+## Use
 
-## Installation
+1. Back up the source `.codex` directory. Keep backups private: they contain conversations and local configuration.
+2. Completely exit ChatGPT Desktop and all Codex CLI sessions before import or rollback.
+3. Scan the backup, select chats, map all workspace roots, and review the dry-run plan. Fork ancestors may be added to the selection.
+4. Import and check the resulting chats before continuing work. Keep the reported transaction ID for rollback.
 
-Download a build for your platform from the repository’s **Releases** page.
+The tool accepts `.codex`, `Codex_backup`, and the upstream legacy `Codex` backup layout. It does not copy project source files. Paginated history requires the matching native `codex.exe`. Windows discovery checks `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`; set `CODEX_MIGRATE_CODEX_BIN` explicitly if necessary.
 
-- Windows: extract the ZIP and run `Codex Migrate.exe`.
-- macOS: extract the ZIP and move `Codex Migrate.app` to Applications. On first
-  launch, Control-click the app and choose **Open**. If macOS still blocks it,
-  use **System Settings → Privacy & Security → Open Anyway**.
-- Linux: extract the archive and run `codex-migrate-gui`.
+```powershell
+.\codex-migrate.exe scan 'D:\Backup\Codex_backup'
+.\codex-migrate.exe import 'D:\Backup\Codex_backup' `
+  --thread 'THREAD_UUID' --map 'C:\OldProject=D:\NewProject' --dry-run
 
-Release builds are not currently signed with commercial certificates or
-notarized by Apple. Windows SmartScreen or macOS Gatekeeper may show a warning.
-Always verify the release checksum before running a downloaded binary.
-
-## Build from source
-
-Requirements:
-
-- Rust stable toolchain
-- Platform build tools supported by `eframe`
-
-```bash
-git clone https://github.com/ChenglongLi777/codex-migrate.git
-cd codex-migrate
-cargo test --all-targets --features gui
-cargo build --release --features gui --bins
+# Remove --dry-run after reviewing the plan.
+# Add --map arguments for additional workspace roots.
+.\codex-migrate.exe rollback 'TRANSACTION_ID'
 ```
 
-macOS application bundle:
+`--history-only 'OLD_CWD'` creates a placeholder workspace without registering a real project. `--codex-home` selects the target history directory; also check `CODEX_SQLITE_HOME` when it is set, because it independently selects the database directory. To try an isolated target, set both to a separate directory. Run `codex-migrate --help` for all commands.
 
-```bash
-./scripts/package-macos.sh
+## Validation and limitations
+
+The adaptation passed **33 Rust tests and 13 synthetic integration scenarios** against the runtime listed above; formatting and Clippy also passed. The downloaded Actions MSVC package also passed the 13 scenarios on 2026-10-09, and its GUI started successfully with isolated data roots. A full GUI import into a real account was not performed. Results are in [docs/current-validation.md](docs/current-validation.md).
+
+Cloud account history, attachment entities, `thread_attachments`, generated artifacts, other operating systems, and future runtimes are outside this validation. Rollback restores snapshots taken before migration; later chats or edits can be overwritten. Verify the import before resuming chats, and back up current data before a later rollback.
+
+## Build
+
+```powershell
+git clone https://github.com/QShuiOwO/codex-migrate-current.git
+cd codex-migrate-current
+cargo test --locked --all-targets --features gui
+cargo build --locked --release --features gui --bins
 ```
 
-Generated executables:
+Rust 1.99.0 was used for validation. Windows builds also need a compatible native C/C++ toolchain. The optional runtime suite uses Python 3.11+ and synthetic data only:
 
-```text
-target/release/codex-migrate
-target/release/codex-migrate-gui
+```powershell
+python .\tests\current_runtime.py --codex-bin 'C:\ActualRuntime\codex.exe' `
+  --migrate-bin "$PWD\target\release\codex-migrate.exe"
 ```
 
-## Typical GUI workflow
+Actions validates Windows builds, generates dependency notices, and packages the executables. A version tag creates a draft prerelease; the workflow's explicit `publish` input publishes it after review. See [docs/publishing.md](docs/publishing.md).
 
-1. Quit Codex Desktop and all Codex CLI sessions.
-2. Select the old `.codex/`, `Codex_backup/`, a legacy minimal `Codex/`, or a parent containing exactly one of them.
-3. Select the projects and sessions to import.
-4. Bind each selected old project path to its new local folder, apply a parent mapping, or choose history-only recovery.
-5. Preview the merge plan.
-6. Confirm the import and reopen Codex after completion.
+## License and provenance
 
-## Merge rules
+[MIT](LICENSE), retaining `Copyright (c) 2026 codex-migrate contributors`. Changes in this fork are also MIT licensed. See [UPSTREAM.json](UPSTREAM.json) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for provenance and binary/font notices.
 
-| Source and target state | Result |
-| --- | --- |
-| UUID does not exist locally | Import |
-| UUID and content hash match | Skip and refresh indexes |
-| Target rollout is a full prefix of source | Use the longer source |
-| Source rollout is a full prefix of target | Keep the longer target |
-| Same UUID has divergent content | Stop and report a conflict |
-
-The tool does not splice divergent JSONL files or silently generate a new UUID.
-
-## Safety
-
-- Checks whether the target SQLite database is in use.
-- Uses SQLite Online Backup for database snapshots.
-- Stages rollout files before moving them into place.
-- Updates only detected schema fields.
-- Automatically restores the snapshot if an import fails.
-- Stores rollback data under:
-
-```text
-$CODEX_HOME/migration_transactions/<TRANSACTION_ID>/
-```
-
-Deleting rollback data only removes the selected snapshot directories; it does not modify current sessions.
-
-## CLI examples
-
-```bash
-codex-migrate export ~/.codex --output-parent ~/Backups
-codex-migrate scan ~/Backups/Codex_backup
-
-codex-migrate import ~/Backups/Codex_backup --dry-run \
-  --map '/Users/alex/Projects=D:/Projects'
-
-codex-migrate import ~/Backups/Codex_backup \
-  --map '/Users/alex/Projects=D:/Projects'
-
-codex-migrate rebind --codex-home ~/.codex \
-  --map '/old/projects=/new/projects' --dry-run
-
-codex-migrate export-html --codex-home ~/.codex --thread THREAD_ID
-codex-migrate verify
-codex-migrate rollback TRANSACTION_ID
-```
-
-Run `codex-migrate --help` for the complete interface.
-
-## Project status
-
-This project relies on local Codex storage structures that may change between Codex versions. Compatibility fixes and real-world reports are welcome. Before opening a bug report, remove conversations, credentials, usernames, and private paths from logs and screenshots.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+Report compatibility issues in [this fork](https://github.com/QShuiOwO/codex-migrate-current/issues). Remove private conversations, credentials, and paths; do not upload a complete `.codex`. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [TRADEMARKS.md](TRADEMARKS.md).

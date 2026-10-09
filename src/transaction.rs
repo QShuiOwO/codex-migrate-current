@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use rusqlite::backup::Backup;
 use rusqlite::Connection;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -10,6 +11,9 @@ use uuid::Uuid;
 pub struct ImportTransaction {
     pub root: PathBuf,
     pub record: TransactionRecord,
+    database_roots: Vec<PathBuf>,
+    original_databases: BTreeSet<PathBuf>,
+    original_rollouts: BTreeSet<PathBuf>,
 }
 
 impl ImportTransaction {
@@ -32,9 +36,90 @@ impl ImportTransaction {
             replaced_files: Vec::new(),
             completed: false,
         };
-        let mut transaction = Self { root, record };
+        let original_rollouts = rollout_files(codex_home)?;
+        let mut transaction = Self {
+            root,
+            record,
+            database_roots: Vec::new(),
+            original_databases: BTreeSet::new(),
+            original_rollouts,
+        };
         transaction.persist()?;
         Ok(transaction)
+    }
+
+    pub fn snapshot_databases(&mut self, roots: &[PathBuf]) -> Result<()> {
+        self.database_roots = roots
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.original_databases = self.database_files()?;
+        for path in self.original_databases.clone() {
+            self.backup_sqlite_family(&path)?;
+        }
+        // Persist known runtime families before starting the server (crash-safe).
+        for root in self.database_roots.clone() {
+            for name in [
+                "state_5.sqlite",
+                "thread_history_1.sqlite",
+                "logs_1.sqlite",
+                "goals_1.sqlite",
+                "memories_1.sqlite",
+                "queue_1.sqlite",
+                "codex-dev.db",
+            ] {
+                let path = root.join(name);
+                if !path.exists() {
+                    self.note_created(&path)?;
+                    for suffix in ["-wal", "-shm"] {
+                        self.note_created(&PathBuf::from(format!("{}{suffix}", path.display())))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn track_new_databases(&mut self) -> Result<()> {
+        for path in self
+            .database_files()?
+            .difference(&self.original_databases.clone())
+        {
+            self.note_created(path)?;
+            for suffix in ["-wal", "-shm"] {
+                self.note_created(&PathBuf::from(format!("{}{suffix}", path.display())))?;
+            }
+        }
+        // Native unarchive/archive can move a rollout to a runtime-chosen path.
+        for path in rollout_files(Path::new(&self.record.codex_home))?
+            .difference(&self.original_rollouts.clone())
+        {
+            self.note_created(path)?;
+        }
+        Ok(())
+    }
+
+    fn database_files(&self) -> Result<BTreeSet<PathBuf>> {
+        let mut paths = BTreeSet::new();
+        for root in &self.database_roots {
+            if !root.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(root)? {
+                let path = entry?.path();
+                if path.is_file()
+                    && matches!(
+                        path.extension().and_then(|s| s.to_str()),
+                        Some("sqlite" | "db")
+                    )
+                {
+                    paths.insert(path);
+                }
+            }
+        }
+        Ok(paths)
     }
 
     pub fn backup_sqlite_family(&mut self, state_db: &Path) -> Result<()> {
@@ -70,9 +155,10 @@ impl ImportTransaction {
     }
 
     pub fn note_created(&mut self, path: &Path) -> Result<()> {
-        self.record
-            .created_files
-            .push(path.to_string_lossy().into_owned());
+        let text = path.to_string_lossy().into_owned();
+        if !self.record.created_files.contains(&text) {
+            self.record.created_files.push(text);
+        }
         self.persist()
     }
 
@@ -90,6 +176,17 @@ impl ImportTransaction {
     }
 
     fn backup_file(&mut self, path: &Path, replaced: bool) -> Result<()> {
+        let text = path.to_string_lossy();
+        if self.record.created_files.iter().any(|p| p == text.as_ref())
+            || self
+                .record
+                .replaced_files
+                .iter()
+                .chain(&self.record.backups)
+                .any(|e| e.original == text)
+        {
+            return Ok(());
+        }
         let name = format!(
             "{}-{}",
             self.record.backups.len() + self.record.replaced_files.len(),
@@ -119,6 +216,25 @@ impl ImportTransaction {
         fs::rename(temporary, final_path)?;
         Ok(())
     }
+}
+
+fn rollout_files(home: &Path) -> Result<BTreeSet<PathBuf>> {
+    let mut files = BTreeSet::new();
+    for folder in ["sessions", "archived_sessions"] {
+        let root = home.join(folder);
+        if !root.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(root).follow_links(false) {
+            let entry = entry?;
+            if entry.file_type().is_file()
+                && entry.path().extension().and_then(|s| s.to_str()) == Some("jsonl")
+            {
+                files.insert(entry.into_path());
+            }
+        }
+    }
+    Ok(files)
 }
 
 pub fn rollback_by_id(codex_home: &Path, id: &str) -> Result<()> {
@@ -159,7 +275,8 @@ fn rollback_record(record: &TransactionRecord) -> Result<()> {
     for path in record.created_files.iter().rev() {
         let path = Path::new(path);
         if path.is_file() {
-            fs::remove_file(path)?;
+            fs::remove_file(path)
+                .with_context(|| format!("remove rollback-created file {}", path.display()))?;
         }
     }
     for entry in record
@@ -176,11 +293,15 @@ fn rollback_record(record: &TransactionRecord) -> Result<()> {
         if let Some(parent) = original.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(backup, original)?;
+        fs::copy(backup, original)
+            .with_context(|| format!("restore rollback file {}", original.display()))?;
     }
     for entry in &record.backups {
         let original = Path::new(&entry.original);
-        if original.extension().and_then(|value| value.to_str()) == Some("sqlite") {
+        if matches!(
+            original.extension().and_then(|value| value.to_str()),
+            Some("sqlite" | "db")
+        ) {
             let connection = Connection::open(original)?;
             connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         }
