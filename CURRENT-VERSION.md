@@ -1,6 +1,6 @@
 # 当前 ChatGPT Desktop 适配版
 
-这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.2`，不是上游发布版，也不是 OpenAI 官方工具。
+这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.3`，不是上游发布版，也不是 OpenAI 官方工具。
 
 2026-10-08 的适配目标是这台 Windows 电脑的 ChatGPT Desktop `OpenAI.Codex 26.1002.7124.0`，对应原生运行时 `codex-cli 0.162.0-alpha.2`。测试使用独立目录中的合成对话，没有迁移或改写真实 `.codex`。
 
@@ -12,6 +12,12 @@ Windows x64 发布包从本 Fork 的 Releases 下载，解压后的程序为：
 - `codex-migrate-gui.exe`：图形界面，沿用原项目的操作流程，迁移引擎已更新。
 
 程序可以自动寻找 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`；也可以显式设置 `CODEX_MIGRATE_CODEX_BIN`。分页历史需要使用与桌面应用匹配的原生运行时。
+
+## current.3 额外目录待处理检查
+
+2026-10-10 修复：主项目已映射但额外的 `visualizations` 目录未映射时，GUI 曾显示“0 个路径待处理”，用户点击预览后才得到缺失目录错误。现在计数覆盖已选会话需要的额外目录，预览按钮在补齐映射前禁用，并在项目卡片显示明确提示。只属于未选会话的目录不计入当前任务，“仅恢复历史”继续忽略项目绑定。
+
+已有 current.2 可以直接解决该预览错误：为显示“尚未映射”的额外目录点击“使用项目目录”，或先创建目标目录再通过该行“选择文件夹”指定它。映射只修改记录中的路径，不会复制该目录内的文件。此次日志中的原生运行时版本匹配，失败停在预览阶段，没有执行对话数据导入。
 
 ## current.2 导入修复与失败日志
 
@@ -98,3 +104,5 @@ python .\tests\current_runtime.py --codex-bin 'C:\实际安装路径\codex.exe' 
 - App Server 的项目与分页接口仍可能随版本变化；不保证未来版本永久兼容。新接口不匹配时应失败并回滚，而不是静默写入旧索引。
 
 本 Fork 的中英文入口说明见 `README.md` 和 `README.zh-CN.md`。原许可和署名文件均保留，上游原始说明仍可从基线提交查看。
+
+2026-10-10 GUI 原生复测使用本机更新后的 Desktop `26.1007.2314.0` / `codex-cli 0.162.0-alpha.17.2`，额外目录分别映射和“使用项目目录”后的合成导入均通过。`26.1002.7124.0` / `0.162.0-alpha.2` 的 16 项完整引擎验证保留在 current.2 记录中。本次 GUI 修复未改动迁移引擎。
