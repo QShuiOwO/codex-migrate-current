@@ -163,6 +163,50 @@ impl UiProject {
             || self.history_only
             || (!self.target_path.is_empty() && Path::new(&self.target_path).is_dir())
     }
+
+    fn required_extra_roots(&self) -> BTreeSet<String> {
+        let cwd = normalize(&self.original_cwd);
+        let paths = self
+            .sessions
+            .iter()
+            .filter(|session| session.selected)
+            .filter_map(|session| {
+                session
+                    .source
+                    .thread
+                    .extra
+                    .get("_migrate_workspace_paths")?
+                    .as_array()
+            })
+            .flatten()
+            .filter_map(serde_json::Value::as_str);
+        let paths = paths.map(normalize).collect::<BTreeSet<_>>();
+        self.extra_roots
+            .keys()
+            .filter(|root| {
+                paths.iter().any(|path| {
+                    !codex_migrate::path_mapper::prefix_matches(path, &cwd, cfg!(windows))
+                        && codex_migrate::path_mapper::prefix_matches(path, root, cfg!(windows))
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn pending_import_path_count(&self) -> usize {
+        if self.selected_count() == 0 || self.history_only {
+            return 0;
+        }
+        usize::from(!self.is_ready())
+            + self
+                .required_extra_roots()
+                .iter()
+                .filter(|root| {
+                    let target = &self.extra_roots[*root];
+                    target.is_empty() || !Path::new(target).is_dir()
+                })
+                .count()
+    }
 }
 
 enum TaskEvent {
@@ -696,6 +740,17 @@ impl MigrationApp {
     }
 
     fn preview(&mut self) {
+        if self.pending_mapping_count() > 0 {
+            self.fail(
+                tr(
+                    self.chinese(),
+                    "请先映射所有待处理目录（包括额外目录），再预览导入。",
+                    "Map all pending folders, including additional folders, before previewing.",
+                )
+                .to_owned(),
+            );
+            return;
+        }
         let source = PathBuf::from(self.source_folder.trim());
         let target = optional_path(&self.target_folder);
         let options = self.import_options();
@@ -831,8 +886,8 @@ impl MigrationApp {
     fn pending_mapping_count(&self) -> usize {
         self.projects
             .iter()
-            .filter(|project| !project.is_ready())
-            .count()
+            .map(UiProject::pending_import_path_count)
+            .sum()
     }
 
     fn all_state(&self) -> CheckState {
@@ -1250,6 +1305,7 @@ impl MigrationApp {
         let state = project.state();
         let selected = project.selected_count();
         let total = project.sessions.len();
+        let required_extra_roots = project.required_extra_roots();
         egui::Frame::new()
             .fill(SURFACE)
             .stroke(Stroke::new(1.0_f32, BORDER))
@@ -1362,12 +1418,12 @@ impl MigrationApp {
                                 }
                             });
                         });
-                        if selected > 0 && !project.history_only && !project.extra_roots.is_empty() {
+                        if selected > 0 && !project.history_only && !required_extra_roots.is_empty() {
                             ui.add_space(8.0);
                             ui.label(RichText::new(tr(zh,
                                 "记录还使用了以下目录，请确认它们在本机的位置：",
                                 "The sessions also use these folders. Choose their local locations:")).small().color(MUTED));
-                            for (old, target) in &mut project.extra_roots {
+                            for (old, target) in project.extra_roots.iter_mut().filter(|(old, _)| required_extra_roots.contains(*old)) {
                                 ui.label(RichText::new(old).small());
                                 ui.horizontal(|ui| {
                                     ui.label(if target.is_empty() { tr(zh, "尚未映射", "Not mapped") } else { target.as_str() });
@@ -1384,7 +1440,7 @@ impl MigrationApp {
                                 });
                             }
                         }
-                        if selected > 0 && !project.is_ready() {
+                        if selected > 0 && project.pending_import_path_count() > 0 {
                             ui.add_space(8.0);
                             status_message(
                                 ui,
@@ -1392,8 +1448,8 @@ impl MigrationApp {
                                 WARNING,
                                 tr(
                                     zh,
-                                    "请选择本机项目文件夹，或设为仅恢复历史",
-                                    "Choose a local project folder or enable history-only mode",
+                                    "请为所有待处理目录选择本机文件夹（包括额外目录），或设为仅恢复历史",
+                                    "Choose local folders for all pending paths, including additional folders, or enable history-only mode",
                                 ),
                             );
                         }
@@ -3518,6 +3574,72 @@ mod tests {
     use codex_migrate::model::{SourceSession, ThreadRecord};
 
     #[test]
+    fn pending_paths_include_unmapped_visualization_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let extra = "/missing-source/.codex/visualizations/2026/10/09/synthetic-thread";
+        let mut source = session("selected").source;
+        source.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!(["/old/project", extra, format!("{extra}/.git")]),
+        );
+        let mut project = project_to_ui(&SourceProject {
+            original_cwd: "/old/project".into(),
+            suggested_target: None,
+            sessions: vec![source],
+        });
+        assert_eq!(project.pending_import_path_count(), 2);
+        project.target_path = root.path().to_string_lossy().into_owned();
+        assert!(project.is_ready());
+        assert_eq!(project.pending_import_path_count(), 1);
+        project
+            .extra_roots
+            .insert(extra.into(), project.target_path.clone());
+        assert_eq!(project.pending_import_path_count(), 0);
+        assert_eq!(
+            options_from_projects(&[project]).mappings[extra],
+            root.path().to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn pending_paths_only_include_selected_sessions_and_ignore_history_only() {
+        let root = tempfile::tempdir().unwrap();
+        let mut selected = session("selected").source;
+        let mut unselected = session("unselected").source;
+        selected.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!(["/old/project", "/missing/selected"]),
+        );
+        unselected.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!(["/old/project", "/missing/unselected"]),
+        );
+        let mut project = project_to_ui(&SourceProject {
+            original_cwd: "/old/project".into(),
+            suggested_target: None,
+            sessions: vec![selected, unselected],
+        });
+        project.target_path = root.path().to_string_lossy().into_owned();
+        project.sessions[1].selected = false;
+        assert_eq!(
+            project.required_extra_roots(),
+            BTreeSet::from(["/missing/selected".into()])
+        );
+        assert_eq!(project.pending_import_path_count(), 1);
+        project
+            .extra_roots
+            .insert("/missing/selected".into(), project.target_path.clone());
+        assert_eq!(project.pending_import_path_count(), 0);
+        project.sessions[1].selected = true;
+        assert_eq!(project.pending_import_path_count(), 1);
+        project.history_only = true;
+        assert_eq!(project.pending_import_path_count(), 0);
+        project.history_only = false;
+        project.set_selected(false);
+        assert_eq!(project.pending_import_path_count(), 0);
+    }
+
+    #[test]
     fn gui_preserves_error_chain_and_maps_additional_roots() {
         let mut selected = session("selected");
         selected.source.thread.extra.insert(
@@ -3601,6 +3723,7 @@ mod tests {
         std::fs::create_dir(&main).unwrap();
         std::fs::create_dir(&artifacts).unwrap();
         projects[0].target_path = main.to_string_lossy().into_owned();
+        assert_eq!(projects[0].pending_import_path_count(), 1);
         let error = operations::plan_directory_import(
             &backup,
             Some(&target),
@@ -3608,7 +3731,10 @@ mod tests {
         )
         .unwrap_err();
         let detail = display_error(error);
-        assert!(detail.contains("workspace root requires an explicit mapping"));
+        assert!(
+            detail.contains("workspace root requires an explicit mapping"),
+            "{detail}"
+        );
         assert!(detail.contains(&extra));
         assert!(detail.contains("诊断日志"));
         assert!(
@@ -3619,6 +3745,7 @@ mod tests {
             .extra_roots
             .insert(normalize(&extra), artifacts.to_string_lossy().into_owned());
         let options = options_from_projects(&projects);
+        assert_eq!(projects[0].pending_import_path_count(), 0);
         operations::plan_directory_import(&backup, Some(&target), &options).unwrap();
         let summary =
             operations::import_directory(&backup, Some(&target), &options, |_| {}).unwrap();
@@ -3659,6 +3786,21 @@ mod tests {
             .unwrap(),
             bytes
         );
+        // Match the GUI's "Use project folder" action for an unmapped visualization root.
+        let shared_workspace = projects[0].target_path.clone();
+        projects[0]
+            .extra_roots
+            .insert(normalize(&extra), shared_workspace);
+        assert_eq!(projects[0].pending_import_path_count(), 0);
+        let collapsed_target = root.path().join("target-shared-workspace");
+        let summary = operations::import_directory(
+            &backup,
+            Some(&collapsed_target),
+            &options_from_projects(&projects),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(summary.imported, 1);
     }
 
     #[test]

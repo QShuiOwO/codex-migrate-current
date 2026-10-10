@@ -4,6 +4,13 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.3] - 2026-10-10
+
+- Count required additional workspace/permission folders in GUI pending paths and disable preview until their local folders are mapped.
+- Show only extra folders required by selected sessions; history-only mode and unselected sessions do not add pending paths.
+- Add a preview entry guard and a clearer project-card instruction.
+- Test the unmapped visualization-folder report, selection filtering, and the native "Use project folder" flow using synthetic data.
+
 ## [1.1.0-current.2] - 2026-10-09
 
 - Show the complete GUI error chain, expand logs on failure, and add copy/save controls.
