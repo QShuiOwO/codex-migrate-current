@@ -1,4 +1,4 @@
-use crate::model::{ScannedThread, ThreadRecord};
+use crate::model::{ExportManifest, ScannedThread, ThreadRecord};
 use crate::sqlite_adapter;
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{Connection, OptionalExtension};
@@ -29,10 +29,53 @@ struct DbMetadata {
 }
 
 pub fn scan_codex_home(home: &Path, state_db: Option<&Path>) -> Result<Vec<ScannedThread>> {
-    let db_metadata = state_db
+    let mut db_metadata = state_db
         .map(load_db_metadata)
         .transpose()?
         .unwrap_or_default();
+    let manifest_path = home.join(crate::selective_export::MANIFEST_NAME);
+    let manifest = if manifest_path.is_file() {
+        let manifest: ExportManifest = serde_json::from_slice(&fs::read(&manifest_path)?)
+            .with_context(|| {
+                format!("read selected-export metadata {}", manifest_path.display())
+            })?;
+        if manifest.format_version != 1 {
+            anyhow::bail!(
+                "unsupported selected-export format: {}",
+                manifest.format_version
+            );
+        }
+        let mut ids = std::collections::HashSet::new();
+        for record in &manifest.threads {
+            if !ids.insert(record.id.as_str()) {
+                anyhow::bail!(
+                    "duplicate thread in selected-export metadata: {}",
+                    record.id
+                );
+            }
+            db_metadata
+                .entry(record.id.clone())
+                .or_insert_with(|| DbMetadata {
+                    title: record.title.clone(),
+                    created_at: record.created_at,
+                    updated_at: record.updated_at,
+                    cwd: record.cwd.clone(),
+                    source: record.source.clone(),
+                    thread_source: record.thread_source.clone(),
+                    model_provider: record.model_provider.clone(),
+                    cli_version: record.cli_version.clone(),
+                    first_user_message: record.first_user_message.clone(),
+                    sandbox_policy: record.sandbox_policy.clone(),
+                    approval_mode: record.approval_mode.clone(),
+                    model: record.model.clone(),
+                    reasoning_effort: record.reasoning_effort.clone(),
+                    extra: record.extra.clone(),
+                });
+        }
+        Some(manifest)
+    } else {
+        None
+    };
     let mut result = Vec::new();
     scan_directory(&home.join("sessions"), false, &db_metadata, &mut result)?;
     scan_directory(
@@ -41,6 +84,26 @@ pub fn scan_codex_home(home: &Path, state_db: Option<&Path>) -> Result<Vec<Scann
         &db_metadata,
         &mut result,
     )?;
+    if let Some(manifest) = manifest {
+        let records = result
+            .iter()
+            .map(|thread| (thread.record.id.as_str(), &thread.record))
+            .collect::<HashMap<_, _>>();
+        if records.len() != result.len() || records.len() != manifest.threads.len() {
+            anyhow::bail!("selected-export conversation list does not match its metadata");
+        }
+        for expected in &manifest.threads {
+            let actual = records.get(expected.id.as_str()).ok_or_else(|| {
+                anyhow!("selected-export conversation is missing: {}", expected.id)
+            })?;
+            if actual.sha256 != expected.sha256 || actual.byte_len != expected.byte_len {
+                anyhow::bail!(
+                    "selected-export conversation checksum mismatch: {}",
+                    expected.id
+                );
+            }
+        }
+    }
     result.sort_by(|left, right| {
         left.record
             .updated_at
@@ -222,7 +285,15 @@ fn scan_rollout(
     let record = ThreadRecord {
         id,
         title: metadata
-            .map(|value| value.title.clone())
+            .and_then(|value| {
+                value
+                    .extra
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| Some(value.title.clone()))
+            })
             .filter(|value| !value.is_empty())
             .or_else(|| title.filter(|value| !value.is_empty()))
             .or_else(|| first_user_message.as_deref().map(summarize_title))

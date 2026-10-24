@@ -192,6 +192,36 @@ def main():
         assert db.execute('SELECT count(*) FROM threads WHERE history_mode="paginated"').fetchone()[0] == 2
         assert db.execute('SELECT archived FROM threads WHERE id=?', (parent,)).fetchone()[0] == 1
     record('fresh target, paginated fork, native multiroot project, source unchanged')
+
+    selective_source = root / 'selective-source'
+    shutil.copytree(source, selective_source)
+    excluded, _, _ = fixture(selective_source, old, label='Must not leave source')
+    (selective_source / 'auth.json').write_text('{"synthetic_secret":"must-not-export"}', encoding='utf-8')
+    (selective_source / 'config.toml').write_text('synthetic-secret-config', encoding='utf-8')
+    export_parent, selected_target = root / 'selected-export', root / 'selected-target'
+    exported = run(export_parent, ['export', selective_source, '--output-parent', export_parent, '--thread', child])
+    summary = json.loads(exported.stdout)
+    assert summary['selected_count'] == 1 and summary['dependency_count'] == 1 and summary['thread_count'] == 2
+    backup = Path(summary['output'])
+    assert not (backup / 'state_5.sqlite').exists()
+    assert not (backup / 'auth.json').exists() and not (backup / 'config.toml').exists()
+    for exported_file in backup.rglob('*'):
+        if exported_file.is_file():
+            assert excluded.encode() not in exported_file.read_bytes()
+    selected_scan = json.loads(run(selected_target, ['scan', backup]).stdout)
+    assert selected_scan['thread_count'] == 2
+    selected_sessions = {session['thread']['id']: session['thread'] for project in selected_scan['projects'] for session in project['sessions']}
+    assert selected_sessions[child]['title'] == '分页分叉测试'
+    assert selected_sessions[parent]['archived']
+    assert selected_sessions[child]['extra']['source_project']['name'] == '多根项目测试'
+    run(selected_target, ['import', backup, '--codex-home', selected_target, '--thread', child, *mappings])
+    assert history(selected_target, child) == (2, 4)
+    with closing(sqlite3.connect(selected_target / 'state_5.sqlite')) as db:
+        assert db.execute('SELECT name FROM threads WHERE id=?', (child,)).fetchone()[0] == '分页分叉测试'
+        assert [row[0] for row in db.execute('SELECT path FROM project_roots ORDER BY position')] == [str(new), str(new_second)]
+        assert db.execute('SELECT archived FROM threads WHERE id=?', (parent,)).fetchone()[0] == 1
+    record('selected export excludes other chats and preserves fork, archive, names and native multiroot project on import')
+
     html_root = root / 'html'
     run(target, ['export-html', '--codex-home', target, '--thread', child, '--output', html_root])
     html = next(html_root.glob('*.html')).read_text(encoding='utf-8')
@@ -248,6 +278,34 @@ def main():
     failed_logs = [p.read_text(encoding='utf-8') for p in (root / 'diagnostic-logs').glob('*.log')]
     assert any(extra_id in value and 'missing-extra-root' in value and 'RESULT failure' in value for value in failed_logs)
     record('missing extra root rejected during preview with persistent diagnostic log')
+
+    extra_folder = root / 'auto-created' / 'visualizations'
+    extra_args = ['import', extra_source, '--codex-home', extra_target, '--thread', extra_id,
+                  *mappings, '--map', f'{root / "missing-extra-root"}={extra_folder}',
+                  '--map', f'/unused-project={root / "unused-directory"}']
+    run(extra_target, [*extra_args, '--dry-run'])
+    assert not extra_folder.exists() and not extra_target.exists()
+    completed = run(extra_target, extra_args)
+    assert extra_folder.is_dir() and not (extra_folder / '.git').exists()
+    assert not (root / 'unused-directory').exists()
+    assert history(extra_target, extra_id) == (1, 2)
+    transaction = completed.stdout.rsplit('transaction id: ', 1)[1].strip()
+    run(extra_target, ['rollback', transaction, '--codex-home', extra_target])
+    assert not (root / 'auto-created').exists()
+    record('missing mapped extra directory created only on import and removed by rollback')
+
+    rejected = run(extra_target, extra_args, success=False, executable_override=args.migrate_bin)
+    assert 'rolled back' in rejected.stderr
+    assert not (root / 'auto-created').exists()
+    record('runtime failure rolls back automatically created workspace directories')
+
+    extra_folder.parent.mkdir(parents=True)
+    extra_folder.write_text('existing user file', encoding='utf-8')
+    rejected = run(extra_target, [*extra_args, '--dry-run'], success=False)
+    assert 'occupied by a file' in rejected.stderr
+    assert str(extra_folder).replace('\\', '/') in rejected.stderr.replace('\\', '/')
+    assert extra_folder.read_text(encoding='utf-8') == 'existing user file'
+    record('file at extra directory destination is reported without overwriting it')
 
 
     bad_source = root / 'bad-source'

@@ -33,6 +33,7 @@ impl ImportTransaction {
             source_codex_home: source_codex_home.to_string_lossy().into_owned(),
             backups: Vec::new(),
             created_files: Vec::new(),
+            created_directories: Vec::new(),
             replaced_files: Vec::new(),
             completed: false,
         };
@@ -160,6 +161,32 @@ impl ImportTransaction {
             self.record.created_files.push(text);
         }
         self.persist()
+    }
+
+    pub fn create_directory(&mut self, path: &Path) -> Result<()> {
+        crate::path_mapper::validate_directory_destination(path)?;
+        let missing = path
+            .ancestors()
+            .take_while(|p| !p.is_dir())
+            .collect::<Vec<_>>();
+        for directory in missing.into_iter().rev() {
+            match fs::create_dir(directory) {
+                Ok(()) => {
+                    self.record
+                        .created_directories
+                        .push(directory.to_string_lossy().into_owned());
+                    self.persist()?;
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AlreadyExists && directory.is_dir() => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("create project directory {}", directory.display())
+                    })
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn backup_replaced(&mut self, path: &Path) -> Result<()> {
@@ -306,6 +333,30 @@ fn rollback_record(record: &TransactionRecord) -> Result<()> {
             connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         }
     }
+    // Never recursively delete project folders: users may have populated them
+    // since import. Remove only our own empty directories, deepest first.
+    for directory in record.created_directories.iter().rev() {
+        let path = Path::new(directory);
+        if !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+            continue;
+        }
+        match fs::remove_dir(path) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "remove empty migration-created directory {}",
+                        path.display()
+                    )
+                })
+            }
+        }
+    }
     Ok(())
 }
 
@@ -313,6 +364,44 @@ fn rollback_record(record: &TransactionRecord) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn rollback_removes_only_created_empty_directories() {
+        let root = TempDir::new().unwrap();
+        let home = root.path().join("home");
+        let mut tx = ImportTransaction::begin(&home, &home, root.path()).unwrap();
+        let empty = root.path().join("created/deep/empty");
+        let used = root.path().join("used");
+        let existing = root.path().join("existing");
+        fs::create_dir(&existing).unwrap();
+        tx.create_directory(&empty).unwrap();
+        tx.create_directory(&empty).unwrap();
+        tx.create_directory(&used).unwrap();
+        tx.create_directory(&existing).unwrap();
+        fs::write(used.join("user.txt"), "keep").unwrap();
+        rollback_by_id(&home, &tx.record.id).unwrap();
+        assert!(!root.path().join("created").exists());
+        assert_eq!(fs::read_to_string(used.join("user.txt")).unwrap(), "keep");
+        assert!(existing.is_dir());
+        tx.rollback().unwrap();
+    }
+
+    #[test]
+    fn directory_failure_reports_path_and_rolls_back_earlier_creations() {
+        let root = TempDir::new().unwrap();
+        let home = root.path().join("home");
+        let mut tx = ImportTransaction::begin(&home, &home, root.path()).unwrap();
+        let created = root.path().join("first/nested");
+        tx.create_directory(&created).unwrap();
+        let blocked = root.path().join("occupied");
+        fs::write(&blocked, "keep").unwrap();
+        let error = tx.create_directory(&blocked).unwrap_err();
+        assert!(format!("{error:#}").contains(&blocked.to_string_lossy().to_string()));
+        assert!(tx.create_directory(&blocked.join("nested")).is_err());
+        tx.rollback().unwrap();
+        assert!(!root.path().join("first").exists());
+        assert_eq!(fs::read_to_string(blocked).unwrap(), "keep");
+    }
 
     #[test]
     fn deletes_only_selected_transaction_directories() {

@@ -478,6 +478,13 @@ fn execute_import(
     ])?;
 
     let result = (|| {
+        for directory in &plan.workspace_directories {
+            let path = Path::new(directory);
+            if !path.is_dir() {
+                progress(format!("Creating project directory: {}", path.display()));
+            }
+            transaction.create_directory(path)?;
+        }
         let staging = transaction.root.join("staging");
         fs::create_dir_all(&staging)?;
         let existing_threads =
@@ -546,7 +553,6 @@ fn execute_import(
             match planned.action {
                 MergeAction::SkipIdentical | MergeAction::KeepTargetLonger => {
                     progress(format!("Refreshing Codex index for {}", planned.thread.id));
-                    fs::create_dir_all(&mapped_cwd)?;
                     let existing_bytes = fs::read(&target)?;
                     let (rewritten, _) = rollout::rewrite_workspace_bytes(
                         &existing_bytes,
@@ -617,7 +623,6 @@ fn execute_import(
                 fs::copy(&staged, &target)?;
                 fs::remove_file(&staged)
             })?;
-            fs::create_dir_all(&mapped_cwd)?;
             let actual = register_and_index(
                 &mut environment,
                 server.as_mut(),
@@ -995,7 +1000,7 @@ fn validate_options(catalog: &SourceCatalog, options: &ImportOptions) -> Result<
     Ok(())
 }
 
-fn build_catalog(source_root: &Path, threads: &[ScannedThread]) -> SourceCatalog {
+pub(crate) fn build_catalog(source_root: &Path, threads: &[ScannedThread]) -> SourceCatalog {
     let mut groups = BTreeMap::<String, Vec<&ScannedThread>>::new();
     for thread in threads {
         groups

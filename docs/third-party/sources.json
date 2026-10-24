@@ -1,4 +1,14 @@
 {
+  "winapi-x86_64-pc-windows-gnu@0.4.0": {
+    "files": [
+      "retep998--winapi-rs--796a8e6c2971--LICENSE-MIT"
+    ],
+    "license": "MIT OR Apache-2.0",
+    "urls": [
+      "https://raw.githubusercontent.com/retep998/winapi-rs/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-MIT",
+      "https://raw.githubusercontent.com/retep998/winapi-rs/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/x86_64/Cargo.toml"
+    ]
+  },
   "clipboard-win@5.4.1": {
     "files": [
       "DoumanAsh--clipboard-win--3b27cf2bfd1a--LICENSE"

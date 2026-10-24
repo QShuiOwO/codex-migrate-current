@@ -10,6 +10,7 @@ pub mod operations;
 pub mod path_mapper;
 pub mod rollout;
 pub mod scanner;
+pub mod selective_export;
 pub mod session_index;
 pub mod settings;
 pub mod sqlite_adapter;

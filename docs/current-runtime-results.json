@@ -1,5 +1,5 @@
 {
-  "runtime": "codex-cli 0.162.0-alpha.2",
+  "runtime": "codex-cli 0.164.0-alpha.11.1",
   "cases": [
     {
       "name": "dry-run and ancestor closure",
@@ -7,6 +7,10 @@
     },
     {
       "name": "fresh target, paginated fork, native multiroot project, source unchanged",
+      "passed": true
+    },
+    {
+      "name": "selected export excludes other chats and preserves fork, archive, names and native multiroot project on import",
       "passed": true
     },
     {
@@ -32,6 +36,18 @@
     },
     {
       "name": "missing extra root rejected during preview with persistent diagnostic log",
+      "passed": true
+    },
+    {
+      "name": "missing mapped extra directory created only on import and removed by rollback",
+      "passed": true
+    },
+    {
+      "name": "runtime failure rolls back automatically created workspace directories",
+      "passed": true
+    },
+    {
+      "name": "file at extra directory destination is reported without overwriting it",
       "passed": true
     },
     {
@@ -67,10 +83,8 @@
       "passed": true
     }
   ],
-  "version": "1.1.0-current.2",
-  "tested_target": "x86_64-pc-windows-gnu",
-  "gui_native_flow": {
-    "passed": true,
-    "case": "Synthetic export -> GUI project/options construction -> missing mapping rejected -> mapped native import"
-  }
+  "version": "1.1.0-current.5",
+  "checked_on": "2026-10-24",
+  "build_target": "x86_64-pc-windows-gnu",
+  "test_data": "synthetic"
 }
