@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.5] - 2026-10-24
+
+- Automatically select original local absolute paths for additional GUI workspace folders; create missing directories during import, with no writes during preview.
+- Prepare required runtime/project roots before native registration; do not create permission-only descendants such as `.git` or glob paths.
+- Record newly created directories in the transaction. Rollback removes only empty folders created by that import, retaining existing folders and user files. Report directory creation failures with the path and system error.
+
+- Validate 49 regular Rust tests, one native GUI export/import flow, 20 native scenarios and standalone startup with `codex-cli 0.164.0-alpha.11.1`.
+
+## [1.1.0-current.4] - Local development build (included in current.5)
+
+- Load active and archived local conversations automatically on the GUI export page. Start with no selection and support individual, project and all-session selection.
+- Export selected conversations plus explicitly listed fork ancestors. Store selected metadata and index rows without copying unrelated conversations, databases, credentials, settings or logs.
+- Preserve names, archive state, project metadata and multiple workspace roots through export and import. Verify exported rollout hashes and reject missing or cyclic ancestors before writing a backup.
+- Add repeatable CLI `export --thread UUID` selection; exporting without `--thread` retains the complete-folder backup command.
+- Add a single-file Windows build with embedded license notices and no additional VC++ runtime requirement.
+- Validate 46 regular Rust tests, the synthetic GUI export/import flow, and 17 native runtime scenarios against `codex-cli 0.164.0-alpha.11.1`.
+
 ## [1.1.0-current.3] - 2026-10-10
 
 - Count required additional workspace/permission folders in GUI pending paths and disable preview until their local folders are mapped.

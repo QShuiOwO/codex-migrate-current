@@ -36,6 +36,9 @@ struct ExportArgs {
     source: PathBuf,
     #[arg(long)]
     output_parent: PathBuf,
+    /// Export only these conversations and any required fork ancestors.
+    #[arg(long = "thread")]
+    threads: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -101,6 +104,16 @@ pub fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Export(args) => {
+            if !args.threads.is_empty() {
+                let summary = crate::selective_export::export(
+                    &args.source,
+                    &args.output_parent,
+                    &args.threads.into_iter().collect(),
+                    |_| {},
+                )?;
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+                return Ok(());
+            }
             let summary = operations::export_directory(&args.source, &args.output_parent, |_| {})?;
             println!(
                 "backed up the complete Codex directory with {} session file(s) to {}; skipped {} symbolic link(s)",

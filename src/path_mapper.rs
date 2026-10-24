@@ -1,5 +1,5 @@
 use crate::model::PlatformKind;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,34 @@ use std::path::{Path, PathBuf};
 pub struct PathMapping {
     pub source: String,
     pub target: String,
+}
+
+/// Check a directory destination without creating anything during preview.
+pub fn validate_directory_destination(path: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        anyhow::bail!(
+            "project directory must be a local absolute path: {}",
+            path.display()
+        );
+    }
+    for ancestor in path.ancestors() {
+        match std::fs::metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => return Ok(()),
+            Ok(_) => anyhow::bail!(
+                "project directory path is occupied by a file: {}",
+                ancestor.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect project directory {}", ancestor.display()))
+            }
+        }
+    }
+    anyhow::bail!(
+        "project directory has no accessible filesystem root: {}",
+        path.display()
+    )
 }
 
 pub fn parse_mapping(value: &str) -> Result<PathMapping> {

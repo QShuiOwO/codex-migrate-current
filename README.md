@@ -4,9 +4,15 @@
 
 A community fork of [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate), updated to migrate **local Codex code chats in ChatGPT Desktop**. The upstream baseline is v1.0.8, commit `37f5300c15447921baf3b98d8ef09d07a3a60008`. This fork retains the upstream history, attribution, and MIT license. It is not affiliated with or endorsed by OpenAI.
 
-Version **1.1.0-current.3** is a **Windows x64 prerelease**. Compatibility was checked on 2026-10-08 against ChatGPT Desktop MSIX `OpenAI.Codex 26.1002.7124.0` and its native runtime `codex-cli 0.162.0-alpha.2`. It does not migrate cloud Chat/Work account history.
+Version **1.1.0-current.5** is a **Windows x64 prerelease**. Compatibility was checked on 2026-10-24 against Desktop `26.1021.3705.0` and its native runtime `codex-cli 0.164.0-alpha.11.1`. It does not migrate cloud Chat/Work account history.
 
 ## What changed
+
+**1.1.0-current.5** includes selective export, automatic creation of missing additional folders during import, and a single-file Windows EXE. Opening **Export sessions** automatically lists active and archived local conversations with nothing selected. Choose individual conversations, a project, or all records, choose an output folder, then export. Required fork ancestors are listed before export.
+
+Selected backups contain rollout JSONL files, selected index rows, and `codex-migrate-export.json` metadata, retaining names and project relationships without copying unrelated conversations, databases, settings or logs. Import these backups with current.4 or a later version supporting the format. Project files and attachment entities still need separate transfer.
+
+CLI selection is repeatable: `codex-migrate export SOURCE --output-parent DEST --thread UUID1 --thread UUID2`. Omitting `--thread` retains the original complete-directory backup command.
 
 - Recognizes paginated history and completed message events.
 - Includes fork ancestors automatically and recalculates rewritten parent byte offsets.
@@ -19,20 +25,28 @@ The CLI and bilingual GUI share the updated migration engine. See [CURRENT-VERSI
 
 ## Download
 
-Download `Codex-Migrate-Current-1.1.0-current.3-Windows-x64.zip` and its `.sha256` file from [this fork's Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Extract the archive:
+For the GUI, download [the standalone EXE](https://github.com/QShuiOwO/codex-migrate-current/releases/download/v1.1.0-current.5/Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe) from [current.5](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.5) and run it directly. No companion CLI or additional VC++ runtime is needed. The optional ZIP below contains both GUI and CLI.
+
+Download `Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip` and its `.sha256` file from [this fork's Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Extract the archive:
 
 - `codex-migrate-gui.exe`: graphical application.
 - `codex-migrate.exe`: command-line application.
 - `SHA256SUMS.txt`: executable checksums.
 - `LICENSE`, `THIRD_PARTY_NOTICES.txt`, and documentation: attribution and usage information.
 
-Release binaries are built by GitHub Actions for Windows MSVC and are unsigned. They require the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). If Windows reports a missing `VCRUNTIME140.dll`, install Microsoft's x64 Redistributable. Compare the ZIP checksum before running them:
+The optional ZIP binaries are built by GitHub Actions for Windows MSVC and are unsigned. They require the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). If Windows reports a missing `VCRUNTIME140.dll`, install Microsoft's x64 Redistributable. Compare the ZIP checksum before running them:
 
 ```powershell
-(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.3-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 macOS/Linux source support is inherited from upstream, but this adaptation has no equivalent integration validation or binary releases for those platforms.
+
+### Standalone Windows executable
+
+The standalone build produces `Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe`. Copy and launch this single file; no extraction, companion CLI, or additional VC++ runtime installation is needed. Current-history migration still requires a compatible Desktop / Codex runtime on the destination computer. Transfer conversation backups and project files separately.
+
+Settings includes the upstream MIT attribution and an option to save the complete embedded license notices. With the maintenance workspace's portable Rust GNU and LLVM-MinGW MSVCRT toolchains in `../.toolchain`, run `./scripts/build-standalone.ps1 -Python python`. The script collects notices, runs formatting, Clippy and tests, builds the binaries, and rejects non-system DLL imports. The EXE and checksum are written to `dist/standalone/`. This local standalone build is separate from the existing GitHub MSVC ZIP workflow.
 
 ## Use
 
@@ -57,7 +71,7 @@ The tool accepts `.codex`, `Codex_backup`, and the upstream legacy `Codex` backu
 
 ## Validation and limitations
 
-The current GUI passes **41 regular Rust tests**, plus an opt-in synthetic native export/preview/import flow with both separate and shared workspace mappings. The unchanged current.2 migration engine passed 16 synthetic native scenarios in its release package. Formatting and Clippy passed; the new MSVC package is checked before publication. Results are in [docs/current-validation.md](docs/current-validation.md).
+The current.5 standalone build passes **49 regular Rust tests, one native GUI flow, and 20 native migration scenarios**, including automatic directory creation, failure rollback and file-collision protection. Formatting and Clippy pass. Tests use synthetic conversations. `VALIDATION.json` beside the standalone EXE records the current checks; historical release validation remains in [docs/current-validation.md](docs/current-validation.md).
 
 Cloud account history, attachment entities, `thread_attachments`, generated artifacts, other operating systems, and future runtimes are outside this validation. Rollback restores snapshots taken before migration; later chats or edits can be overwritten. Verify the import before resuming chats, and back up current data before a later rollback.
 
@@ -89,6 +103,6 @@ Report compatibility issues in [this fork](https://github.com/QShuiOwO/codex-mig
 
 The GUI displays the complete error chain, expands the log panel on failure, and supports copying or saving logs. Preview/import logs are written automatically to `%LOCALAPPDATA%\codex-migrate\logs\`; the exact filename is shown in the error. Logs survive rollback and include the selected runtime, data roots, mappings, failure stages, and native stderr diagnostics. Review local paths and thread IDs before sharing a log.
 
-Map the additional workspace/permission folders listed in the GUI alongside the main project. Missing mappings are rejected during preview before target writes. Windows discovery now prefers the Desktop runtime over a global CLI in PATH; an explicit `CODEX_MIGRATE_CODEX_BIN` override still takes precedence.
+In current.5, additional GUI folders default to their original local absolute paths. Missing folders show "Create during import" and are created only when import runs; preview does not write them. You can still choose another folder or use the main project folder. Paths incompatible with this OS still need an explicit mapping. Windows discovery now prefers the Desktop runtime over a global CLI in PATH; an explicit `CODEX_MIGRATE_CODEX_BIN` override still takes precedence.
 
-current.3 counts all additional folders required by selected sessions and disables preview until they are mapped. Use the additional folder row's "Use project folder" or "Choose folder" action to resolve it.
+Creation failures include the path and system error in the diagnostic log. Files are never overwritten by directory creation. Failed imports and manual rollback remove only newly created, empty directories, preserving existing folders and user files. Creating an empty directory does not restore its original project files or attachments.

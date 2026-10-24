@@ -6,6 +6,18 @@ use std::path::Path;
 
 /// Only structured metadata paths; conversation text is never inspected for mappings.
 pub fn workspace_paths(content: &[u8]) -> Result<std::collections::BTreeSet<String>> {
+    collect_workspace_paths(content, true)
+}
+
+/// Actual workspace folders, excluding permission entries for files and globs.
+pub fn runtime_workspace_paths(content: &[u8]) -> Result<std::collections::BTreeSet<String>> {
+    collect_workspace_paths(content, false)
+}
+
+fn collect_workspace_paths(
+    content: &[u8],
+    include_policy: bool,
+) -> Result<std::collections::BTreeSet<String>> {
     let mut paths = std::collections::BTreeSet::new();
     for line in content.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
         let value: Value = serde_json::from_slice(line)?;
@@ -25,6 +37,9 @@ pub fn workspace_paths(content: &[u8]) -> Result<std::collections::BTreeSet<Stri
                         .map(crate::path_mapper::normalize),
                 );
             }
+        }
+        if !include_policy {
+            continue;
         }
         let policy = &payload["sandbox_policy"];
         if let Some(roots) = policy["writable_roots"].as_array() {

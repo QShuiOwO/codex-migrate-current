@@ -7,10 +7,9 @@ use codex_migrate::model::{
     DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SourceCatalog, SourceProject,
     SourceSession,
 };
-use codex_migrate::operations::{
-    self, ExportSummary, ImportSummary, TransactionSummary, VerificationReport,
-};
+use codex_migrate::operations::{self, ImportSummary, TransactionSummary, VerificationReport};
 use codex_migrate::path_mapper::{map_explicit, normalize};
+use codex_migrate::selective_export::{self, SelectedExportSummary};
 use codex_migrate::settings::{self, AppSettings, LanguagePreference};
 use eframe::egui::{
     self, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Layout, Margin,
@@ -28,6 +27,8 @@ const SURFACE: Color32 = Color32::from_rgb(255, 255, 253);
 const BACKGROUND: Color32 = Color32::from_rgb(246, 247, 244);
 const WARNING: Color32 = Color32::from_rgb(159, 101, 38);
 const DANGER: Color32 = Color32::from_rgb(174, 65, 58);
+#[cfg(feature = "standalone")]
+const STANDALONE_NOTICES: &str = include_str!(concat!(env!("OUT_DIR"), "/standalone-notices.txt"));
 #[cfg(target_os = "windows")]
 const OPTICAL_TEXT_OFFSET_Y: f32 = 0.0;
 #[cfg(not(target_os = "windows"))]
@@ -203,7 +204,8 @@ impl UiProject {
                 .iter()
                 .filter(|root| {
                     let target = &self.extra_roots[*root];
-                    target.is_empty() || !Path::new(target).is_dir()
+                    codex_migrate::path_mapper::validate_directory_destination(Path::new(target))
+                        .is_err()
                 })
                 .count()
     }
@@ -218,11 +220,12 @@ enum TaskResult {
     Scan(Result<SourceCatalog, String>),
     RepairScan(Result<SourceCatalog, String>),
     HtmlScan(Result<SourceCatalog, String>),
+    ExportScan(Result<SourceCatalog, String>),
     Plan(Result<ImportPlan, String>),
     Import(Result<ImportSummary, String>),
     Rebind(Result<ImportSummary, String>),
     HtmlExport(Result<codex_migrate::html_export::HtmlExportSummary, String>),
-    Export(Result<ExportSummary, String>),
+    Export(Result<SelectedExportSummary, String>),
     Diagnose(Result<DiagnosticReport, String>),
     Verify(Result<VerificationReport, String>),
     Transactions(Result<Vec<TransactionSummary>, String>),
@@ -237,6 +240,9 @@ struct MigrationApp {
     target_folder: String,
     export_source: String,
     export_parent: String,
+    export_scan_source: Option<String>,
+    export_catalog: Option<SourceCatalog>,
+    export_projects: Vec<UiProject>,
     catalog: Option<SourceCatalog>,
     projects: Vec<UiProject>,
     repair_projects: Vec<UiProject>,
@@ -291,6 +297,9 @@ impl MigrationApp {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .to_string_lossy()
                 .into_owned(),
+            export_scan_source: None,
+            export_catalog: None,
+            export_projects: Vec::new(),
             catalog: None,
             projects: Vec::new(),
             repair_projects: Vec::new(),
@@ -438,6 +447,23 @@ impl MigrationApp {
                 }
                 Err(error) => self.fail(error),
             },
+            TaskResult::ExportScan(result) => match result {
+                Ok(catalog) => {
+                    self.export_projects = unselected_projects(&catalog);
+                    self.status = format!(
+                        "{} {} {}",
+                        tr(zh, "已读取", "Loaded"),
+                        catalog.thread_count,
+                        tr(
+                            zh,
+                            "个本机对话，请选择要导出的记录",
+                            "local conversations; select those to export"
+                        )
+                    );
+                    self.export_catalog = Some(catalog);
+                }
+                Err(error) => self.fail(error),
+            },
             TaskResult::Plan(result) => match result {
                 Ok(plan) => {
                     let conflicts = plan
@@ -543,36 +569,19 @@ impl MigrationApp {
             TaskResult::Export(result) => match result {
                 Ok(summary) => {
                     self.status = format!(
-                        "{} {} {}",
+                        "{} {} {} · {} {}",
                         tr(zh, "已导出", "Exported"),
-                        summary.thread_count,
-                        tr(zh, "个会话", "sessions")
+                        summary.selected_count,
+                        tr(zh, "个所选对话", "selected conversations"),
+                        summary.dependency_count,
+                        tr(zh, "个依赖父对话", "required ancestors")
                     );
                     self.success = Some(format!("{}：{}", self.status, summary.output));
-                    let detail = if summary.skipped_symlink_count == 0 {
-                        summary.output
-                    } else {
-                        format!(
-                            "{}\n{} {} {}",
-                            summary.output,
-                            tr(zh, "已跳过", "Skipped"),
-                            summary.skipped_symlink_count,
-                            tr(
-                                zh,
-                                "个符号链接，详情见日志",
-                                "symbolic link(s); see logs for details",
-                            )
-                        )
-                    };
                     self.completion_notice = Some(CompletionNotice {
-                        title: tr(zh, "备份导出完成", "Backup export completed").to_owned(),
-                        message: format!(
-                            "{} {} {}",
-                            tr(zh, "已导出", "Exported"),
-                            summary.thread_count,
-                            tr(zh, "个会话", "sessions")
-                        ),
-                        detail,
+                        title: tr(zh, "所选对话导出完成", "Selected conversations exported")
+                            .to_owned(),
+                        message: self.status.clone(),
+                        detail: summary.output,
                     });
                 }
                 Err(error) => self.fail(error),
@@ -788,13 +797,27 @@ impl MigrationApp {
     fn export(&mut self) {
         let source = PathBuf::from(self.export_source.trim());
         let parent = PathBuf::from(self.export_parent.trim());
+        let selected = selected_ids(&self.export_projects);
         self.start_task(move |sender| {
             let progress_sender = sender.clone();
-            let result = operations::export_directory(&source, &parent, move |message| {
+            let result = selective_export::export(&source, &parent, &selected, move |message| {
                 let _ = progress_sender.send(TaskEvent::Progress(message));
             })
             .map_err(display_error);
             let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::Export(result))));
+        });
+    }
+
+    fn scan_export(&mut self) {
+        let source = self.export_source.trim().to_owned();
+        self.export_scan_source = Some(source.clone());
+        self.export_catalog = None;
+        self.export_projects.clear();
+        self.start_task(move |sender| {
+            let result = selective_export::scan(Path::new(&source)).map_err(display_error);
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::ExportScan(
+                result,
+            ))));
         });
     }
 
@@ -946,7 +969,7 @@ impl MigrationApp {
                     &mut self.page,
                     Page::Export,
                     LineIcon::Export,
-                    tr(zh, "导出备份", "Backup"),
+                    tr(zh, "导出对话", "Export sessions"),
                 );
                 nav_button(
                     ui,
@@ -1421,12 +1444,21 @@ impl MigrationApp {
                         if selected > 0 && !project.history_only && !required_extra_roots.is_empty() {
                             ui.add_space(8.0);
                             ui.label(RichText::new(tr(zh,
-                                "记录还使用了以下目录，请确认它们在本机的位置：",
-                                "The sessions also use these folders. Choose their local locations:")).small().color(MUTED));
+                                "记录还使用了以下目录；不存在时将在导入时自动创建，也可以更改位置：",
+                                "These additional folders will be created during import if missing. You can change their locations:")).small().color(MUTED));
                             for (old, target) in project.extra_roots.iter_mut().filter(|(old, _)| required_extra_roots.contains(*old)) {
                                 ui.label(RichText::new(old).small());
-                                ui.horizontal(|ui| {
-                                    ui.label(if target.is_empty() { tr(zh, "尚未映射", "Not mapped") } else { target.as_str() });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(if target.is_empty() {
+                                        tr(zh, "尚未映射", "Not mapped")
+                                    } else if normalize(target) == normalize(old) {
+                                        tr(zh, "使用原目录", "Use original folder")
+                                    } else {
+                                        target.as_str()
+                                    });
+                                    if !target.is_empty() && !Path::new(target).exists() {
+                                        ui.label(RichText::new(tr(zh, "导入时自动创建", "Create during import")).small().color(MUTED));
+                                    }
                                     if secondary_button(ui, Some(LineIcon::Folder), tr(zh, "选择文件夹", "Choose folder")).clicked() {
                                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
                                             *target = path.to_string_lossy().into_owned();
@@ -1676,59 +1708,176 @@ impl MigrationApp {
     }
 
     fn export_page(&mut self, ui: &mut egui::Ui) {
+        if self.export_scan_source.is_none() && !self.busy {
+            self.scan_export();
+        }
         let zh = self.chinese();
         page_title(
             ui,
-            tr(zh, "导出完整 Codex 备份", "Export full Codex backup"),
+            tr(zh, "选择要导出的对话", "Select conversations to export"),
             tr(
                 zh,
-                "将本机 .codex 文件夹的全部内容复制到所选位置，保留数据库、会话和配置。",
-                "Copy the complete local .codex folder, including databases, sessions, and settings.",
+                "读取本机活动和已归档的 Codex 对话，勾选后导出为可迁移的备份。",
+                "Browse active and archived local Codex conversations and export a selected backup.",
             ),
         );
         card(ui, |ui| {
-            folder_row(
-                ui,
-                tr(zh, "本机 Codex 文件夹", "Local Codex folder"),
-                &mut self.export_source,
-                tr(zh, "选择来源", "Choose source"),
-            );
-            ui.add_space(16.0);
-            folder_row(
-                ui,
-                tr(zh, "导出到父目录", "Export parent folder"),
-                &mut self.export_parent,
-                tr(zh, "选择位置", "Choose location"),
-            );
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr(
-                        zh,
-                        "将创建：所选目录/Codex_backup/",
-                        "Creates: selected folder/Codex_backup/",
-                    ))
-                    .small()
-                    .color(MUTED),
+            ui.add_enabled_ui(!self.busy, |ui| {
+                let previous_source = self.export_source.clone();
+                folder_row(
+                    ui,
+                    tr(zh, "本机 Codex 文件夹", "Local Codex folder"),
+                    &mut self.export_source,
+                    tr(zh, "选择来源", "Choose source"),
                 );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if primary_action(ui, tr(zh, "导出备份", "Export backup"), !self.busy).clicked()
-                    {
-                        self.export();
-                    }
-                });
+                if self.export_source != previous_source {
+                    self.export_catalog = None;
+                    self.export_projects.clear();
+                    self.export_scan_source = Some(self.export_source.trim().to_owned());
+                }
+                if secondary_button(
+                    ui,
+                    None,
+                    tr(zh, "读取 / 刷新对话列表", "Load / refresh conversations"),
+                )
+                .clicked()
+                {
+                    self.scan_export();
+                }
+                ui.add_space(10.0);
+                folder_row(
+                    ui,
+                    tr(zh, "导出到父目录", "Export parent folder"),
+                    &mut self.export_parent,
+                    tr(zh, "选择位置", "Choose location"),
+                );
             });
-            ui.add_space(12.0);
-            status_message(
+            ui.label(RichText::new(tr(
+                zh,
+                "将创建：所选目录/Codex_backup/。执行导出前请关闭 Desktop 和 Codex CLI。",
+                "Creates: selected folder/Codex_backup/. Close Desktop and Codex CLI before exporting.",
+            )).small().color(MUTED));
+        });
+        let Some(catalog) = &self.export_catalog else {
+            ui.add_space(16.0);
+            if self.busy {
+                ui.spinner();
+                ui.label(tr(zh, "正在读取本机对话…", "Loading local conversations…"));
+            } else {
+                ui.label(tr(
+                    zh,
+                    "点击“读取 / 刷新对话列表”查看本机记录。",
+                    "Load the conversation list to choose records.",
+                ));
+            }
+            return;
+        };
+        if catalog.thread_count == 0 {
+            ui.label(tr(
+                zh,
+                "本机目录中没有找到对话记录。",
+                "No conversations were found in this folder.",
+            ));
+            return;
+        }
+        ui.add_space(12.0);
+        ui.add_enabled_ui(!self.busy, |ui| {
+            let state = projects_selection_state(&self.export_projects);
+            ui.horizontal(|ui| {
+                if selection_control(ui, state, tr(zh, "全部选择", "Select all")).clicked() {
+                    set_projects_selected(&mut self.export_projects, state != CheckState::All);
+                }
+                ui.label(format!(
+                    "{} {} · {}",
+                    catalog.thread_count,
+                    tr(zh, "个对话", "conversations"),
+                    tr(zh, "默认不选中任何记录", "Nothing is selected by default")
+                ));
+            });
+        });
+        let selected = selected_ids(&self.export_projects);
+        let selection = selective_export::plan(catalog, &selected);
+        match &selection {
+            Ok(plan) if !plan.dependency_thread_ids.is_empty() => {
+                ui.collapsing(
+                    format!(
+                        "{} {} {}",
+                        tr(zh, "将额外包含", "Also includes"),
+                        plan.dependency_thread_ids.len(),
+                        tr(zh, "条父对话的完整记录", "complete ancestor conversations")
+                    ),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                for session in catalog
+                                    .projects
+                                    .iter()
+                                    .flat_map(|project| &project.sessions)
+                                {
+                                    if plan.dependency_thread_ids.contains(&session.thread.id) {
+                                        ui.label(format!(
+                                            "{} ({})",
+                                            session.thread.title, session.thread.id
+                                        ));
+                                    }
+                                }
+                            });
+                    },
+                );
+            }
+            Err(error) => status_message(
                 ui,
                 LineIcon::Warning,
                 WARNING,
-                tr(
-                    zh,
-                    "登录凭据不会导出，但备份仍包含私密对话、配置和日志；请勿公开分享，导出前请关闭 Codex。",
-                    "Login credentials are excluded, but the backup still contains private conversations, settings, and logs. Do not share it publicly, and quit Codex before exporting.",
-                ),
-            );
+                &display_error(anyhow::anyhow!(error.to_string())),
+            ),
+            _ => {}
+        }
+        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .id_salt("export_conversation_list")
+            .max_height((ui.available_height() - 78.0).max(100.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    for project in &mut self.export_projects {
+                        session_selection_card(ui, project, zh);
+                        ui.add_space(8.0);
+                    }
+                });
+            });
+        sticky_action_bar(ui, |ui| {
+            // Selection changes made in the list take effect on the next frame,
+            // so compute the final button state from the current checkboxes.
+            let selected = selected_ids(&self.export_projects);
+            let current_plan =
+                selective_export::plan(self.export_catalog.as_ref().unwrap(), &selected);
+            let total = current_plan
+                .as_ref()
+                .map(|plan| plan.thread_ids.len())
+                .unwrap_or(0);
+            ui.label(format!(
+                "{} {} · {} {}",
+                selected.len(),
+                tr(zh, "个已选", "selected"),
+                total,
+                tr(zh, "个将导出（含父对话）", "to export including ancestors")
+            ));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if primary_action(
+                    ui,
+                    tr(zh, "导出所选对话", "Export selected conversations"),
+                    !selected.is_empty()
+                        && current_plan.is_ok()
+                        && !self.busy
+                        && !self.export_parent.trim().is_empty(),
+                )
+                .clicked()
+                {
+                    self.export();
+                }
+            });
         });
     }
 
@@ -2055,6 +2204,55 @@ impl MigrationApp {
                 }
             }
         });
+        #[cfg(feature = "standalone")]
+        {
+            ui.add_space(14.0);
+            card(ui, |ui| {
+                ui.strong(tr(zh, "关于独立运行版", "About the standalone edition"));
+                ui.label(concat!("Codex Migrate ", env!("CARGO_PKG_VERSION")));
+                ui.label(tr(
+                    zh,
+                    "Windows x64 单文件程序，无需额外安装 VC++ 运行库。",
+                    "A single Windows x64 executable with no extra VC++ runtime installation.",
+                ));
+                ui.label(tr(
+                    zh,
+                    "迁移新版记录时仍需本机安装匹配的 Desktop / Codex 运行时。",
+                    "Migrating current histories still requires a compatible local Desktop / Codex runtime.",
+                ));
+                ui.hyperlink_to(
+                    "ChenglongLi777/codex-migrate (MIT)",
+                    "https://github.com/ChenglongLi777/codex-migrate",
+                );
+                ui.collapsing(tr(zh, "项目许可证", "Project license"), |ui| {
+                    ui.label(include_str!("../../LICENSE"));
+                });
+                if ui
+                    .button(tr(
+                        zh,
+                        "保存完整许可说明…",
+                        "Save complete license notices…",
+                    ))
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_file_name("Codex-Migrate-Licenses.txt")
+                        .save_file()
+                    {
+                        match std::fs::write(&path, STANDALONE_NOTICES) {
+                            Ok(()) => {
+                                self.status = format!(
+                                    "{}: {}",
+                                    tr(zh, "许可说明已保存", "License notices saved"),
+                                    path.display()
+                                );
+                            }
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
+                    }
+                }
+            });
+        }
     }
 
     fn recovery_page(&mut self, ui: &mut egui::Ui) {
@@ -2387,7 +2585,7 @@ impl eframe::App for MigrationApp {
                 let content_size = Vec2::new(content_width, ui.available_height());
                 let fixed_layout = (self.page == Page::Import
                     && matches!(self.step, ImportStep::Select | ImportStep::Preview))
-                    || matches!(self.page, Page::Repair | Page::Html);
+                    || matches!(self.page, Page::Export | Page::Repair | Page::Html);
                 if fixed_layout {
                     ui.allocate_ui_with_layout(content_size, Layout::top_down(Align::Min), |ui| {
                         self.current_page(ui);
@@ -2404,6 +2602,16 @@ impl eframe::App for MigrationApp {
             });
         self.confirmation_windows(context);
     }
+}
+
+fn unselected_projects(catalog: &SourceCatalog) -> Vec<UiProject> {
+    let mut projects = catalog
+        .projects
+        .iter()
+        .map(project_to_ui)
+        .collect::<Vec<_>>();
+    set_projects_selected(&mut projects, false);
+    projects
 }
 
 fn project_to_ui(project: &SourceProject) -> UiProject {
@@ -2456,7 +2664,9 @@ fn extra_root_mappings(project: &SourceProject) -> BTreeMap<String, String> {
         .map(|path| {
             (
                 path.clone(),
-                if Path::new(path).is_dir() {
+                if codex_migrate::path_mapper::validate_directory_destination(Path::new(path))
+                    .is_ok()
+                {
                     path.clone()
                 } else {
                     String::new()
@@ -2675,7 +2885,29 @@ fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) 
                             &session.source.thread.title
                         })
                         .truncate(),
-                    );
+                    )
+                    .on_hover_text(&session.source.thread.id);
+                    if session.source.thread.archived {
+                        ui.label(
+                            RichText::new(tr(zh, "已归档", "Archived"))
+                                .small()
+                                .color(MUTED),
+                        );
+                    }
+                    if let Some(updated) =
+                        chrono::DateTime::from_timestamp(session.source.thread.updated_at, 0)
+                    {
+                        ui.label(
+                            RichText::new(
+                                updated
+                                    .with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string(),
+                            )
+                            .small()
+                            .color(MUTED),
+                        );
+                    }
                 });
             }
         });
@@ -3571,12 +3803,39 @@ fn install_system_font(context: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_selection_starts_empty_and_keeps_only_checked_sessions() {
+        let catalog = SourceCatalog {
+            source_codex_home: "/source".into(),
+            source_platform: codex_migrate::model::PlatformKind::Windows,
+            source_codex_version: None,
+            projects: vec![SourceProject {
+                original_cwd: "/old/project".into(),
+                suggested_target: None,
+                sessions: vec![session("one").source, session("two").source],
+            }],
+            thread_count: 2,
+        };
+        let mut projects = unselected_projects(&catalog);
+        assert!(selected_ids(&projects).is_empty());
+        projects[0].sessions[1].selected = true;
+        assert_eq!(selected_ids(&projects), ["two".to_owned()].into());
+        assert_eq!(
+            selective_export::plan(&catalog, &selected_ids(&projects))
+                .unwrap()
+                .thread_ids,
+            ["two"]
+        );
+        set_projects_selected(&mut projects, true);
+        assert_eq!(selected_ids(&projects).len(), 2);
+    }
     use codex_migrate::model::{SourceSession, ThreadRecord};
 
     #[test]
     fn pending_paths_include_unmapped_visualization_directory() {
         let root = tempfile::tempdir().unwrap();
-        let extra = "/missing-source/.codex/visualizations/2026/10/09/synthetic-thread";
+        let extra = "relative-source/.codex/visualizations/2026/10/09/synthetic-thread";
         let mut source = session("selected").source;
         source.thread.extra.insert(
             "_migrate_workspace_paths".into(),
@@ -3608,11 +3867,11 @@ mod tests {
         let mut unselected = session("unselected").source;
         selected.thread.extra.insert(
             "_migrate_workspace_paths".into(),
-            serde_json::json!(["/old/project", "/missing/selected"]),
+            serde_json::json!(["/old/project", "relative/selected"]),
         );
         unselected.thread.extra.insert(
             "_migrate_workspace_paths".into(),
-            serde_json::json!(["/old/project", "/missing/unselected"]),
+            serde_json::json!(["/old/project", "relative/unselected"]),
         );
         let mut project = project_to_ui(&SourceProject {
             original_cwd: "/old/project".into(),
@@ -3623,12 +3882,12 @@ mod tests {
         project.sessions[1].selected = false;
         assert_eq!(
             project.required_extra_roots(),
-            BTreeSet::from(["/missing/selected".into()])
+            BTreeSet::from(["relative/selected".into()])
         );
         assert_eq!(project.pending_import_path_count(), 1);
         project
             .extra_roots
-            .insert("/missing/selected".into(), project.target_path.clone());
+            .insert("relative/selected".into(), project.target_path.clone());
         assert_eq!(project.pending_import_path_count(), 0);
         project.sessions[1].selected = true;
         assert_eq!(project.pending_import_path_count(), 1);
@@ -3637,6 +3896,44 @@ mod tests {
         project.history_only = false;
         project.set_selected(false);
         assert_eq!(project.pending_import_path_count(), 0);
+    }
+
+    #[test]
+    fn missing_local_extra_directory_is_ready_without_creating_it() {
+        let root = tempfile::tempdir().unwrap();
+        let extra = normalize(&root.path().join("missing/visualizations").to_string_lossy());
+        let unused = normalize(&root.path().join("unselected").to_string_lossy());
+        let mut selected = session("selected").source;
+        selected.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!([extra, format!("{extra}/.git")]),
+        );
+        let mut unselected = session("unselected").source;
+        unselected.thread.extra.insert(
+            "_migrate_workspace_paths".into(),
+            serde_json::json!([unused]),
+        );
+        let mut project = project_to_ui(&SourceProject {
+            original_cwd: "/old/project".into(),
+            suggested_target: None,
+            sessions: vec![selected, unselected],
+        });
+        project.target_path = root.path().to_string_lossy().into_owned();
+        project.sessions[1].selected = false;
+        assert_eq!(project.extra_roots[&extra], extra);
+        assert_eq!(project.pending_import_path_count(), 0);
+        let options = options_from_projects(std::slice::from_ref(&project));
+        assert_eq!(options.mappings[&extra], extra);
+        // Keep mappings available for implicit fork ancestors; the import plan
+        // only creates directories actually referenced by included threads.
+        assert_eq!(options.mappings[&unused], unused);
+        assert!(!Path::new(&extra).exists());
+        std::fs::write(root.path().join("occupied"), "keep").unwrap();
+        project.extra_roots.insert(
+            extra,
+            root.path().join("occupied").to_string_lossy().into_owned(),
+        );
+        assert_eq!(project.pending_import_path_count(), 1);
     }
 
     #[test]
@@ -3681,10 +3978,8 @@ mod tests {
         let source = root.path().join("source");
         let target = root.path().join("target");
         let old = format!("C:/missing-codex-migrate-{}/project", uuid::Uuid::new_v4());
-        let extra = format!(
-            "C:/missing-codex-migrate-{}/artifacts",
-            uuid::Uuid::new_v4()
-        );
+        let artifacts = root.path().join("自动创建/额外目录");
+        let extra = normalize(&artifacts.to_string_lossy());
         let id = uuid::Uuid::new_v4().to_string();
         let turn = uuid::Uuid::new_v4().to_string();
         let records = [
@@ -3709,8 +4004,16 @@ mod tests {
             &bytes,
         )
         .unwrap();
-        let exported =
-            operations::export_directory(&source, &root.path().join("backups"), |_| {}).unwrap();
+        let export_catalog = selective_export::scan(&source).unwrap();
+        let mut export_projects = unselected_projects(&export_catalog);
+        export_projects[0].sessions[0].selected = true;
+        let exported = selective_export::export(
+            &source,
+            &root.path().join("backups"),
+            &selected_ids(&export_projects),
+            |_| {},
+        )
+        .unwrap();
         let backup = PathBuf::from(exported.output);
         let catalog = operations::scan_source(&backup).unwrap();
         let mut projects = catalog
@@ -3719,37 +4022,19 @@ mod tests {
             .map(project_to_ui)
             .collect::<Vec<_>>();
         let main = root.path().join("新项目");
-        let artifacts = root.path().join("额外目录");
         std::fs::create_dir(&main).unwrap();
-        std::fs::create_dir(&artifacts).unwrap();
         projects[0].target_path = main.to_string_lossy().into_owned();
-        assert_eq!(projects[0].pending_import_path_count(), 1);
-        let error = operations::plan_directory_import(
-            &backup,
-            Some(&target),
-            &options_from_projects(&projects),
-        )
-        .unwrap_err();
-        let detail = display_error(error);
-        assert!(
-            detail.contains("workspace root requires an explicit mapping"),
-            "{detail}"
-        );
-        assert!(detail.contains(&extra));
-        assert!(detail.contains("诊断日志"));
-        assert!(
-            !target.exists(),
-            "missing mapping must be rejected before target writes"
-        );
-        projects[0]
-            .extra_roots
-            .insert(normalize(&extra), artifacts.to_string_lossy().into_owned());
+        assert_eq!(projects[0].extra_roots[&extra], extra);
         let options = options_from_projects(&projects);
         assert_eq!(projects[0].pending_import_path_count(), 0);
         operations::plan_directory_import(&backup, Some(&target), &options).unwrap();
+        assert!(!artifacts.exists(), "preview must not create extra folders");
+        assert!(!target.exists());
         let summary =
             operations::import_directory(&backup, Some(&target), &options, |_| {}).unwrap();
         assert_eq!(summary.imported, 1);
+        assert!(artifacts.is_dir());
+        assert!(!artifacts.join(".git").exists());
         let imported = operations::scan_local(Some(&target)).unwrap();
         assert_eq!(imported.thread_count, 1);
         assert_eq!(
@@ -3775,7 +4060,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value["payload"]["runtime_workspace_roots"],
-            json!([main.to_string_lossy(), artifacts.to_string_lossy()])
+            json!([main.to_string_lossy(), extra])
         );
         assert_eq!(
             std::fs::read(

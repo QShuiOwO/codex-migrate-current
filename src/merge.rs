@@ -36,6 +36,7 @@ pub fn build_plan(
         .cloned()
         .collect();
     let mut threads = Vec::new();
+    let mut workspace_directories = std::collections::BTreeSet::new();
 
     for thread_id in &order {
         let source_thread = source
@@ -108,22 +109,38 @@ pub fn build_plan(
         } else {
             &source_thread.content
         };
-        rollout::rewrite_workspace_bytes(content, &mapped_cwd, &options.mappings, history_only)
-            .with_context(|| format!("check workspace mappings for thread {thread_id}"))?;
+        let (rewritten, _) =
+            rollout::rewrite_workspace_bytes(content, &mapped_cwd, &options.mappings, history_only)
+                .with_context(|| format!("check workspace mappings for thread {thread_id}"))?;
+        workspace_directories.insert(mapped_cwd.to_string_lossy().into_owned());
+        workspace_directories.extend(rollout::runtime_workspace_paths(&rewritten)?);
         if !history_only {
+            // Create only mapping bases actually used by this selection. Permission
+            // descendants such as .git and glob patterns must not become folders.
+            for path in rollout::workspace_paths(content)? {
+                if let Some((old, _)) = options
+                    .mappings
+                    .iter()
+                    .filter(|(old, _)| {
+                        crate::path_mapper::prefix_matches(&path, old, cfg!(windows))
+                    })
+                    .max_by_key(|(old, _)| old.len())
+                {
+                    let target = map_explicit(old, &options.mappings, &environment.platform)
+                        .expect("mapping was selected above");
+                    workspace_directories.insert(target.to_string_lossy().into_owned());
+                }
+            }
             if let Some(roots) = record
                 .extra
                 .get("source_project")
                 .and_then(|p| p["roots"].as_array())
             {
                 for root in roots.iter().filter_map(serde_json::Value::as_str) {
-                    if map_explicit(root, &options.mappings, &environment.platform).is_none()
-                        && !Path::new(root).is_dir()
-                    {
-                        anyhow::bail!(
-                            "source project root requires a mapping: {root} (thread {thread_id})"
-                        );
-                    }
+                    let mapped = map_explicit(root, &options.mappings, &environment.platform)
+                        .or_else(|| Path::new(root).is_dir().then(|| PathBuf::from(root)))
+                        .ok_or_else(|| anyhow!("source project root requires a mapping: {root} (thread {thread_id})"))?;
+                    workspace_directories.insert(mapped.to_string_lossy().into_owned());
                 }
             }
         }
@@ -142,6 +159,9 @@ pub fn build_plan(
         .iter()
         .filter(|thread| thread.action == MergeAction::Conflict)
         .count();
+    for directory in &workspace_directories {
+        crate::path_mapper::validate_directory_destination(Path::new(directory))?;
+    }
     Ok(ImportPlan {
         source_codex_home: catalog.source_codex_home.clone(),
         codex_home: environment.codex_home.to_string_lossy().into_owned(),
@@ -149,6 +169,7 @@ pub fn build_plan(
         conflicts,
         dependency_thread_ids,
         mappings: options.mappings.clone(),
+        workspace_directories,
     })
 }
 
@@ -156,9 +177,20 @@ fn dependency_order(
     source: &HashMap<String, &ScannedThread>,
     selected: &std::collections::BTreeSet<String>,
 ) -> Result<Vec<String>> {
+    let records = source
+        .iter()
+        .map(|(id, thread)| (id.clone(), &thread.record))
+        .collect();
+    history_dependency_order(&records, selected)
+}
+
+pub(crate) fn history_dependency_order(
+    source: &HashMap<String, &crate::model::ThreadRecord>,
+    selected: &std::collections::BTreeSet<String>,
+) -> Result<Vec<String>> {
     fn visit(
         id: &str,
-        source: &HashMap<String, &ScannedThread>,
+        source: &HashMap<String, &crate::model::ThreadRecord>,
         visiting: &mut HashSet<String>,
         done: &mut HashSet<String>,
         order: &mut Vec<String>,
@@ -172,7 +204,7 @@ fn dependency_order(
         let thread = source
             .get(id)
             .ok_or_else(|| anyhow!("missing history_base ancestor or selected thread: {id}"))?;
-        if let Some(parent) = thread.record.history_parent() {
+        if let Some(parent) = thread.history_parent() {
             visit(parent, source, visiting, done, order)?;
         }
         visiting.remove(id);

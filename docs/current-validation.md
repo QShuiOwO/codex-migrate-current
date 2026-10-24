@@ -1,12 +1,20 @@
 # 当前版本验证记录
 
+## 2026-10-24 current.5 选择性导出、自动创建目录与独立 EXE
+
+测试环境为 Windows x64、Desktop `26.1021.3705.0` / `codex-cli 0.164.0-alpha.11.1`。Rust 1.99.0 GNU / LLVM-MinGW MSVCRT 构建通过格式检查、Clippy、49 项常规 Rust 测试；另通过 1 项合成 GUI 导出—预览—导入流程和 20 项原生迁移场景。最新场景汇总见 [current-runtime-results.json](current-runtime-results.json)，不包含本机输出路径。
+
+新增验证覆盖只导出所选对话及其分叉祖先、保留归档/名称/多根项目关系、预览不创建额外目录、正式导入创建目录、运行时失败后回滚新建空目录、同名文件不覆盖，以及未选目录不创建。手动回滚保留已有目录和后来写入的用户文件。
+
+独立 EXE 在只有一个 EXE 的隔离目录、仅含 Windows 的 PATH 下启动成功；直接 DLL 导入仅包含系统组件，不要求额外 VC++ 运行库或同目录 CLI。完整 MIT 署名和第三方许可内置。此为本机合成测试与启动验证，未执行真实账号完整鼠标导入、干净 Windows 虚拟机或 Linux 等价验收。独立程序的 BUILD-INFO.json 和 VALIDATION.json 随 Release 提供；GitHub CI 另检查并打包 MSVC ZIP。
+
 ## 2026-10-10 current.3 GUI 待处理检查
 
 日志显示 current.2 正确拒绝了未映射的额外 `visualizations` 目录，运行时版本匹配，操作停在预览阶段。GUI 同时显示“0 个路径待处理”，是待处理统计未包含额外目录造成的误导。
 
 current.3 修改 GUI 的待处理计数、预览入口和提示，迁移引擎不变。常规 Rust 测试 41 项通过，新增两项验证主项目已映射但额外目录未映射的计数，以及未选会话/仅历史模式不计入当前任务。单独启用的合成 GUI 原生流程增加“使用项目目录”路径合并情况，验证映射后能导入。未将用户提供的原始日志、截图、线程 ID 或项目名写入仓库。
 
-下面保留此前引擎与发布包的验证记录；current-runtime-results.json 仍记录 current.2 的 16 项结果。current.3 最终 MSVC 包的复核见 Release 说明。
+下面保留此前引擎与发布包的验证记录；当时的 current-runtime-results.json 记录 current.2 的 16 项结果；当前文件已更新为 current.5。current.3 最终 MSVC 包的复核见 Release 说明。
 
 ## 2026-10-09 current.2 导入修复
 

@@ -79,6 +79,17 @@ pub struct SourceSession {
     pub source_path: String,
 }
 
+/// Metadata for a selected-session backup, without copying unrelated databases.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportManifest {
+    pub format_version: u32,
+    pub producer_version: String,
+    pub exported_at: String,
+    pub selected_thread_ids: BTreeSet<String>,
+    pub dependency_thread_ids: Vec<String>,
+    pub threads: Vec<ThreadRecord>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportOptions {
     pub selected_thread_ids: BTreeSet<String>,
@@ -95,6 +106,8 @@ pub struct TransactionRecord {
     pub source_codex_home: String,
     pub backups: Vec<BackupEntry>,
     pub created_files: Vec<String>,
+    #[serde(default)]
+    pub created_directories: Vec<String>,
     pub replaced_files: Vec<BackupEntry>,
     pub completed: bool,
 }
@@ -136,6 +149,8 @@ pub struct ImportPlan {
     pub dependency_thread_ids: Vec<String>,
     #[serde(default)]
     pub mappings: BTreeMap<String, String>,
+    #[serde(default)]
+    pub workspace_directories: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

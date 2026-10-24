@@ -1,6 +1,10 @@
 # 当前 ChatGPT Desktop 适配版
 
-这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.3`，不是上游发布版，也不是 OpenAI 官方工具。
+2026-10-24 版本更新为 `1.1.0-current.5`，下载见 [GitHub Releases](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.5)。GUI 导出页现在自动读取本机活动与归档对话，默认不选择，支持单条、按项目和全部选择；导出前显示依赖父对话及实际导出总数。导出包仅包含所选对话、依赖父记录及其索引和元数据，导入时恢复名称与项目关系。CLI `export --thread UUID` 支持同样的选择性导出；不指定 `--thread` 仍执行完整目录备份。
+
+单文件独立程序为 `Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe`，许可说明已内置。验证使用 Desktop `26.1021.3705.0` / `codex-cli 0.164.0-alpha.11.1`，49 项常规 Rust 测试、1 项 GUI 原生流程和 20 项原生场景通过。current.5 的验证结果见独立程序旁的 VALIDATION.json。以下保留已发布版本的适配历史。
+
+这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.5`，不是上游发布版，也不是 OpenAI 官方工具。
 
 2026-10-08 的适配目标是这台 Windows 电脑的 ChatGPT Desktop `OpenAI.Codex 26.1002.7124.0`，对应原生运行时 `codex-cli 0.162.0-alpha.2`。测试使用独立目录中的合成对话，没有迁移或改写真实 `.codex`。
 
@@ -12,6 +16,10 @@ Windows x64 发布包从本 Fork 的 Releases 下载，解压后的程序为：
 - `codex-migrate-gui.exe`：图形界面，沿用原项目的操作流程，迁移引擎已更新。
 
 程序可以自动寻找 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`；也可以显式设置 `CODEX_MIGRATE_CODEX_BIN`。分页历史需要使用与桌面应用匹配的原生运行时。
+
+## current.5 自动创建额外目录
+
+导入页为额外目录自动填写可在本机使用的原始绝对路径。不存在的目录标记为“导入时自动创建”，不再要求先手动创建。预览不写入文件系统；正式导入创建所需目录并记录到回滚快照。目录创建失败会输出路径和系统错误；回滚仅移除本次创建且仍为空的目录，不会删除已有目录或用户文件。跨系统路径、同名文件、无权访问的目录仍需选择可用位置。此操作只创建空目录，不复制原项目文件。
 
 ## current.3 额外目录待处理检查
 
