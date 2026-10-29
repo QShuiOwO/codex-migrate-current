@@ -4,11 +4,13 @@
 
 A community fork of [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate), updated to migrate **local Codex code chats in ChatGPT Desktop**. The upstream baseline is v1.0.8, commit `37f5300c15447921baf3b98d8ef09d07a3a60008`. This fork retains the upstream history, attribution, and MIT license. It is not affiliated with or endorsed by OpenAI.
 
-Version **1.1.0-current.5** is a **Windows x64 prerelease**. Compatibility was checked on 2026-10-24 against Desktop `26.1021.3705.0` and its native runtime `codex-cli 0.164.0-alpha.11.1`. It does not migrate cloud Chat/Work account history.
+Version **1.1.0-current.6** is a **Windows x64 prerelease**. Compatibility was checked on 2026-10-29 against Desktop `26.1023.6621.0` and its native runtime `codex-cli 0.165.0-alpha.1.2`. It does not migrate cloud Chat/Work account history.
+
+**Update 2026-10-29:** current.6 fixes repeat-import failures with Desktop `26.1023.6621.0` / `codex-cli 0.165.0-alpha.1.2`. It accepts equivalent Windows extended-length paths while still rejecting different directories. The standalone EXE is `Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe`. Upgrade from current.5 when using this newer runtime; current.5 can fail when importing an existing conversation again.
 
 ## What changed
 
-**1.1.0-current.5** includes selective export, automatic creation of missing additional folders during import, and a single-file Windows EXE. Opening **Export sessions** automatically lists active and archived local conversations with nothing selected. Choose individual conversations, a project, or all records, choose an output folder, then export. Required fork ancestors are listed before export.
+**1.1.0-current.6** retains selective export, automatic creation of missing additional folders during import, and a single-file Windows EXE. Opening **Export sessions** automatically lists active and archived local conversations with nothing selected. Choose individual conversations, a project, or all records, choose an output folder, then export. Required fork ancestors are listed before export.
 
 Selected backups contain rollout JSONL files, selected index rows, and `codex-migrate-export.json` metadata, retaining names and project relationships without copying unrelated conversations, databases, settings or logs. Import these backups with current.4 or a later version supporting the format. Project files and attachment entities still need separate transfer.
 
@@ -25,9 +27,9 @@ The CLI and bilingual GUI share the updated migration engine. See [CURRENT-VERSI
 
 ## Download
 
-For the GUI, download [the standalone EXE](https://github.com/QShuiOwO/codex-migrate-current/releases/download/v1.1.0-current.5/Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe) from [current.5](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.5) and run it directly. No companion CLI or additional VC++ runtime is needed. The optional ZIP below contains both GUI and CLI.
+For the GUI, download [the standalone EXE](https://github.com/QShuiOwO/codex-migrate-current/releases/download/v1.1.0-current.6/Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe) from [current.6](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.6) and run it directly. No companion CLI or additional VC++ runtime is needed. The optional ZIP below contains both GUI and CLI.
 
-Download `Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip` and its `.sha256` file from [this fork's Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Extract the archive:
+Download `Codex-Migrate-Current-1.1.0-current.6-Windows-x64.zip` and its `.sha256` file from [this fork's Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Extract the archive:
 
 - `codex-migrate-gui.exe`: graphical application.
 - `codex-migrate.exe`: command-line application.
@@ -37,14 +39,14 @@ Download `Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip` and its `.sha25
 The optional ZIP binaries are built by GitHub Actions for Windows MSVC and are unsigned. They require the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). If Windows reports a missing `VCRUNTIME140.dll`, install Microsoft's x64 Redistributable. Compare the ZIP checksum before running them:
 
 ```powershell
-(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.6-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 macOS/Linux source support is inherited from upstream, but this adaptation has no equivalent integration validation or binary releases for those platforms.
 
 ### Standalone Windows executable
 
-The standalone build produces `Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe`. Copy and launch this single file; no extraction, companion CLI, or additional VC++ runtime installation is needed. Current-history migration still requires a compatible Desktop / Codex runtime on the destination computer. Transfer conversation backups and project files separately.
+The current source produces `Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe`. Copy and launch this single file; no extraction, companion CLI, or additional VC++ runtime installation is needed. Current-history migration still requires a compatible Desktop / Codex runtime on the destination computer. Transfer conversation backups and project files separately.
 
 Settings includes the upstream MIT attribution and an option to save the complete embedded license notices. With the maintenance workspace's portable Rust GNU and LLVM-MinGW MSVCRT toolchains in `../.toolchain`, run `./scripts/build-standalone.ps1 -Python python`. The script collects notices, runs formatting, Clippy and tests, builds the binaries, and rejects non-system DLL imports. The EXE and checksum are written to `dist/standalone/`. This local standalone build is separate from the existing GitHub MSVC ZIP workflow.
 
@@ -71,7 +73,7 @@ The tool accepts `.codex`, `Codex_backup`, and the upstream legacy `Codex` backu
 
 ## Validation and limitations
 
-The current.5 standalone build passes **49 regular Rust tests, one native GUI flow, and 20 native migration scenarios**, including automatic directory creation, failure rollback and file-collision protection. Formatting and Clippy pass. Tests use synthetic conversations. `VALIDATION.json` beside the standalone EXE records the current checks; historical release validation remains in [docs/current-validation.md](docs/current-validation.md).
+The current.6 GNU standalone build passes **53 regular Rust tests, one native GUI flow, and 23 native migration scenarios**, including automatic directory creation, failure rollback and file-collision protection. Formatting and Clippy pass. Tests use synthetic conversations. `VALIDATION.json` beside the standalone EXE records the current checks; historical release validation remains in [docs/current-validation.md](docs/current-validation.md).
 
 Cloud account history, attachment entities, `thread_attachments`, generated artifacts, other operating systems, and future runtimes are outside this validation. Rollback restores snapshots taken before migration; later chats or edits can be overwritten. Verify the import before resuming chats, and back up current data before a later rollback.
 

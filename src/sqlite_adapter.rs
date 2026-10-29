@@ -64,7 +64,7 @@ pub fn validate_visible_thread(path: &Path, thread_id: &str, expected_cwd: &Path
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .with_context(|| format!("thread {thread_id} is missing from the state database"))?;
-    if Path::new(&cwd) != expected_cwd {
+    if !crate::path_mapper::paths_equivalent(Path::new(&cwd), expected_cwd) {
         return Err(anyhow!(
             "thread {thread_id} has cwd {cwd}, expected {}",
             expected_cwd.display()

@@ -1,5 +1,5 @@
 {
-  "runtime": "codex-cli 0.164.0-alpha.11.1",
+  "runtime": "codex-cli 0.165.0-alpha.1.2",
   "cases": [
     {
       "name": "dry-run and ancestor closure",
@@ -79,12 +79,24 @@
       "passed": true
     },
     {
+      "name": "ordinary repeated import accepts runtime-normalized cwd",
+      "passed": true
+    },
+    {
+      "name": "archived repeated import accepts runtime-normalized cwd",
+      "passed": true
+    },
+    {
+      "name": "history-only repeated import accepts runtime-normalized cwd",
+      "passed": true
+    },
+    {
       "name": "separate CODEX_SQLITE_HOME and fresh-target rollback",
       "passed": true
     }
   ],
-  "version": "1.1.0-current.5",
-  "checked_on": "2026-10-24",
+  "version": "1.1.0-current.6",
+  "checked_on": "2026-10-29",
   "build_target": "x86_64-pc-windows-gnu",
   "test_data": "synthetic"
 }

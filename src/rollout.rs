@@ -283,7 +283,6 @@ pub fn rewrite_cwd_file(path: &Path, cwd: &Path) -> Result<usize> {
 
 pub fn validate_cwd_file(path: &Path, cwd: &Path) -> Result<()> {
     let content = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let expected = cwd.to_string_lossy();
     let mut session_meta = 0;
     for (line_number, line) in content.split(|byte| *byte == b'\n').enumerate() {
         if line.is_empty() {
@@ -304,7 +303,7 @@ pub fn validate_cwd_file(path: &Path, cwd: &Path) -> Result<()> {
         else {
             continue;
         };
-        if actual != expected {
+        if !crate::path_mapper::paths_equivalent(Path::new(actual), cwd) {
             anyhow::bail!(
                 "{} contains cwd {actual}, expected {}",
                 path.display(),

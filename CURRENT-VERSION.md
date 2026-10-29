@@ -1,10 +1,18 @@
 # 当前 ChatGPT Desktop 适配版
 
+## current.6：2026-10-29 更新
+
+当前源码和独立 EXE 为 `1.1.0-current.6`，下载见 [current.6 发行页](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.6)。current.5 在 Desktop `26.1023.6621.0` / `codex-cli 0.165.0-alpha.1.2` 下首次导入可通过，但重复导入会把 `\\?\D:\...` 与普通路径误判为不同目录并回滚。current.6 修复路径映射及数据库、rollout 校验中的等价路径处理，并保留不同目录的拒绝检查。
+
+独立文件为 `Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe`。53 项常规 Rust 测试、1 项 GUI 原生流程和 23 项原生迁移场景通过；普通、归档、仅历史记录的重复导入，以及分叉祖先、项目重绑定和回滚均通过。在此前 current.5 失败的同一隔离目标上直接重试成功，仍为 2 条对话、1 个项目，原生接口读回 2 轮、4 条消息。
+
+验证使用本机 Windows、数据库 schema 62 和合成记录；没有迁移真实账号数据。UNC 路径格式有单元测试，未进行真实网络共享或 Linux 同等集成验收。下文保留已发布 current.5 及更早版本的历史说明。
+
 2026-10-24 版本更新为 `1.1.0-current.5`，下载见 [GitHub Releases](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.5)。GUI 导出页现在自动读取本机活动与归档对话，默认不选择，支持单条、按项目和全部选择；导出前显示依赖父对话及实际导出总数。导出包仅包含所选对话、依赖父记录及其索引和元数据，导入时恢复名称与项目关系。CLI `export --thread UUID` 支持同样的选择性导出；不指定 `--thread` 仍执行完整目录备份。
 
 单文件独立程序为 `Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe`，许可说明已内置。验证使用 Desktop `26.1021.3705.0` / `codex-cli 0.164.0-alpha.11.1`，49 项常规 Rust 测试、1 项 GUI 原生流程和 20 项原生场景通过。current.5 的验证结果见独立程序旁的 VALIDATION.json。以下保留已发布版本的适配历史。
 
-这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；本 Fork 版本为 `1.1.0-current.5`，不是上游发布版，也不是 OpenAI 官方工具。
+这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的 [社区 Fork](https://github.com/QShuiOwO/codex-migrate-current)。基线为上游 `37f5300c15447921baf3b98d8ef09d07a3a60008`、v1.0.8；该次发布版本为 `1.1.0-current.5`，不是上游发布版，也不是 OpenAI 官方工具。
 
 2026-10-08 的适配目标是这台 Windows 电脑的 ChatGPT Desktop `OpenAI.Codex 26.1002.7124.0`，对应原生运行时 `codex-cli 0.162.0-alpha.2`。测试使用独立目录中的合成对话，没有迁移或改写真实 `.codex`。
 

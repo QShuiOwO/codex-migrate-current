@@ -4,6 +4,12 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.6] - 2026-10-29
+
+- Accept equivalent Windows extended-length paths (`\\?\D:\...` and extended UNC paths) in directory mappings, database validation and rollout validation. Preserve drive roots and mapping boundaries, and reject genuinely different directories.
+- Fix repeat imports with Codex `0.165.0-alpha.1.2` for ordinary, archived and history-only conversations, including fork ancestors. Keep Unix path comparisons case-sensitive.
+- Validate 53 regular Rust tests, one native GUI flow, and 23 native scenarios on Desktop `26.1023.6621.0` / state schema 62. Retry the previously failing current.5 synthetic target successfully without duplicating conversations or projects.
+
 ## [1.1.0-current.5] - 2026-10-24
 
 - Automatically select original local absolute paths for additional GUI workspace folders; create missing directories during import, with no writes during preview.
