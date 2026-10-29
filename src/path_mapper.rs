@@ -64,13 +64,14 @@ pub fn map_path(
     let case_insensitive = matches!(platform, PlatformKind::Windows);
     let mut candidates = mappings
         .iter()
-        .filter(|mapping| prefix_matches(&normalized, &mapping.source, case_insensitive))
+        .map(|mapping| (normalize(&mapping.source), &mapping.target))
+        .filter(|(source, _)| prefix_matches(&normalized, source, case_insensitive))
         .collect::<Vec<_>>();
-    candidates.sort_by_key(|mapping| std::cmp::Reverse(mapping.source.len()));
+    candidates.sort_by_key(|(source, _)| std::cmp::Reverse(source.len()));
 
-    if let Some(mapping) = candidates.first() {
-        let suffix = &normalized[mapping.source.len()..];
-        let mapped = format!("{}{}", mapping.target.trim_end_matches('/'), suffix);
+    if let Some((source, target)) = candidates.first() {
+        let suffix = &normalized[source.len()..];
+        let mapped = mapped_suffix(target, suffix);
         return platform_path(&mapped, platform);
     }
 
@@ -82,13 +83,59 @@ pub fn map_path(
 
 pub fn normalize(value: &str) -> String {
     let mut result = value.trim().replace('\\', "/");
+    // Codex 0.165 can store canonical Windows paths in existing thread metadata.
+    // Normalize drive and UNC spellings, but retain other device namespaces.
+    if let Some(rest) = result.strip_prefix("//?/") {
+        if is_windows_drive(rest) {
+            result = rest.to_owned();
+        } else if rest
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC/"))
+        {
+            let unc = &rest[4..];
+            let mut components = unc.split('/');
+            if components.next().is_some_and(|part| !part.is_empty())
+                && components.next().is_some_and(|part| !part.is_empty())
+            {
+                result = format!("//{unc}");
+            }
+        }
+    }
     while result.contains("//") && !result.starts_with("//") {
         result = result.replace("//", "/");
     }
-    if result.len() > 1 {
+    if result.len() > 1 && !(is_windows_drive(&result) && result.len() == 3) {
         result = result.trim_end_matches('/').to_owned();
     }
     result
+}
+
+/// Compare actual filesystem locations when available. Lexical fallback is
+/// platform-specific so Windows spellings do not weaken Unix path checks.
+pub fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => return left == right,
+        (Ok(_), Err(_)) | (Err(_), Ok(_)) => return false,
+        (Err(_), Err(_)) => {}
+    }
+    if cfg!(windows) {
+        normalize(&left.to_string_lossy())
+            .eq_ignore_ascii_case(&normalize(&right.to_string_lossy()))
+    } else {
+        left == right
+    }
+}
+
+fn mapped_suffix(target: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        target.to_owned()
+    } else {
+        format!(
+            "{}/{}",
+            target.trim_end_matches(['/', '\\']),
+            suffix.trim_start_matches('/')
+        )
+    }
 }
 
 pub fn history_only_path(root: &Path, original: &str) -> PathBuf {
@@ -120,14 +167,12 @@ pub fn map_explicit(
     let case_insensitive = matches!(platform, PlatformKind::Windows);
     mappings
         .iter()
+        .map(|(source, target)| (normalize(source), target))
         .filter(|(source, _)| prefix_matches(&normalized, source, case_insensitive))
         .max_by_key(|(source, _)| source.len())
         .map(|(source, target)| {
             let suffix = &normalized[source.len()..];
-            platform_path(
-                &format!("{}{}", target.trim_end_matches('/'), suffix),
-                platform,
-            )
+            platform_path(&mapped_suffix(target, suffix), platform)
         })
 }
 
@@ -140,7 +185,7 @@ pub fn prefix_matches(path: &str, prefix: &str, insensitive: bool) -> bool {
     path == prefix
         || path
             .strip_prefix(&prefix)
-            .is_some_and(|rest| rest.starts_with('/'))
+            .is_some_and(|rest| prefix.ends_with('/') || rest.starts_with('/'))
 }
 
 fn path_is_usable(path: &str, platform: &PlatformKind) -> bool {
@@ -173,6 +218,90 @@ fn is_windows_drive(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_windows_extended_paths_without_losing_drive_roots() {
+        assert_eq!(normalize(r"\\?\D:\Projects\demo"), "D:/Projects/demo");
+        assert_eq!(normalize("//?/D:/Projects/demo/"), "D:/Projects/demo");
+        assert_eq!(
+            normalize(r"\\?\UNC\server\share\demo"),
+            "//server/share/demo"
+        );
+        assert_eq!(normalize("//?/unc/server/share/"), "//server/share");
+        assert_eq!(normalize("D:/"), "D:/");
+        assert_eq!(normalize("//?/D:/"), "D:/");
+        assert_eq!(
+            normalize("//?/Volume{abc}/folder"),
+            "//?/Volume{abc}/folder"
+        );
+        assert_eq!(normalize("//./pipe/demo"), "//./pipe/demo");
+    }
+
+    #[test]
+    fn maps_extended_paths_and_drive_root_without_changing_boundaries() {
+        let mappings = BTreeMap::from([
+            (r"\\?\C:\Work".to_owned(), "D:/Projects".to_owned()),
+            ("C:/".to_owned(), "E:/Root".to_owned()),
+        ]);
+        for (source, target) in [
+            (r"\\?\C:\Work\demo", "D:/Projects/demo"),
+            ("c:/work/demo", "D:/Projects/demo"),
+            ("C:/Work-other", "E:/Root/Work-other"),
+            ("C:/", "E:/Root"),
+        ] {
+            assert_eq!(
+                map_explicit(source, &mappings, &PlatformKind::Windows).unwrap(),
+                PathBuf::from(target)
+            );
+        }
+        let unc = BTreeMap::from([("//server/share".into(), "D:/Shared".into())]);
+        assert_eq!(
+            map_explicit(r"\\?\UNC\server\share\folder", &unc, &PlatformKind::Windows).unwrap(),
+            PathBuf::from("D:/Shared/folder")
+        );
+        assert_eq!(
+            map_path(
+                "//?/D:/demo",
+                &[],
+                &PlatformKind::Wsl,
+                Path::new("/history"),
+                "id"
+            ),
+            PathBuf::from("/mnt/d/demo")
+        );
+        assert_eq!(
+            map_path(
+                "C:/folder",
+                &[parse_mapping("C:/=D:/").unwrap()],
+                &PlatformKind::Windows,
+                Path::new("history"),
+                "id"
+            ),
+            PathBuf::from("D:/folder")
+        );
+        assert_eq!(
+            history_only_path(Path::new("history"), r"\\?\C:\Work"),
+            history_only_path(Path::new("history"), "C:/Work")
+        );
+    }
+
+    #[test]
+    fn path_equivalence_keeps_distinct_existing_directories_distinct() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        assert!(paths_equivalent(&first.canonicalize().unwrap(), &first));
+        assert!(paths_equivalent(&first.join("."), &first));
+        assert!(!paths_equivalent(&first, &second));
+        assert!(!paths_equivalent(&first, &root.path().join("missing")));
+        #[cfg(not(windows))]
+        assert!(!paths_equivalent(
+            Path::new("/missing/Case"),
+            Path::new("/missing/case")
+        ));
+    }
 
     #[test]
     fn longest_prefix_wins() {

@@ -243,7 +243,7 @@ def main():
         '--map', f'{new}={rebind_work}', '--map', f'{new_second}={rebind_second}'])
     assert history(target, child) == (2, 4)
     with closing(sqlite3.connect(target / 'state_5.sqlite')) as db:
-        assert all(Path(cwd) == rebind_work for (cwd,) in db.execute('SELECT cwd FROM threads'))
+        assert all(os.path.samefile(cwd, rebind_work) for (cwd,) in db.execute('SELECT cwd FROM threads'))
     transaction = re.search(r'"transaction_id"\s*:\s*"([^"]+)"', rebound.stdout).group(1)
     run(target, ['rollback', transaction, '--codex-home', target])
     assert logical_snapshot(target) == before_repeat, 'manual rollback failed to restore display history/state/rollouts'
@@ -362,6 +362,25 @@ def main():
         assert db.execute('SELECT count(*) FROM projects').fetchone()[0] == 0
         assert db.execute('SELECT count(*) FROM threads WHERE project_id IS NOT NULL').fetchone()[0] == 0
     record('history-only fork uses stub workspace without native project')
+
+    # Codex 0.165 canonicalizes existing Windows cwd values as \\?\ paths.
+    # Retrying each mode must retain readable history and avoid duplicates.
+    for case_name, case_target, case_source, case_id, case_options in [
+        ('ordinary', many_target, many_source, many, mappings),
+        ('archived', archived_target, archived_source, archived, mappings),
+        ('history-only', stub_target, source, child, ['--history-only', old]),
+    ]:
+        run(case_target, ['import', case_source, '--codex-home', case_target,
+                          '--thread', case_id, *case_options])
+        expected = (1, 205) if case_name == 'ordinary' else (1, 2) if case_name == 'archived' else (2, 4)
+        assert history(case_target, case_id) == expected
+        with closing(sqlite3.connect(case_target / 'state_5.sqlite')) as db:
+            assert db.execute('SELECT count(*) FROM threads WHERE id=?', (case_id,)).fetchone()[0] == 1
+            if case_name == 'archived':
+                assert db.execute('SELECT archived FROM threads WHERE id=?', (case_id,)).fetchone()[0] == 1
+            if case_name == 'history-only':
+                assert db.execute('SELECT count(*) FROM projects').fetchone()[0] == 0
+        record(f'{case_name} repeated import accepts runtime-normalized cwd')
 
     split_target, split_db = root / 'split-home', root / 'split-db'
     completed = run(split_target, ['import', many_source, '--codex-home', split_target, '--thread', many, *mappings], sqlite_home=split_db)

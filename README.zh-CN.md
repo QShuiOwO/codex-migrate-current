@@ -4,11 +4,13 @@
 
 这是基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的社区 Fork，用于迁移 **ChatGPT Desktop 中本地 Codex 代码对话**。上游基线为 v1.0.8、提交 `37f5300c15447921baf3b98d8ef09d07a3a60008`；保留原仓库提交历史、署名和 MIT 许可证。本项目与 OpenAI 不存在隶属或官方背书关系。
 
-版本 **1.1.0-current.5** 为 **Windows x64 预发布版**。2026-10-24 验证的适配目标是 Desktop `26.1021.3705.0`，配套原生运行时为 `codex-cli 0.164.0-alpha.11.1`。不支持迁移 Chat/Work 云端账号历史。
+版本 **1.1.0-current.6** 为 **Windows x64 预发布版**。2026-10-29 验证的适配目标是 Desktop `26.1023.6621.0`，配套原生运行时为 `codex-cli 0.165.0-alpha.1.2`。不支持迁移 Chat/Work 云端账号历史。
+
+**2026-10-29 更新：** current.6 已修复 Desktop `26.1023.6621.0` / `codex-cli 0.165.0-alpha.1.2` 下重复导入失败的问题，能识别等价的 Windows 扩展长度路径，同时拒绝真正不同的目录。独立文件名为 `Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe`。使用此新版运行时的用户应从 current.5 升级；current.5 再次导入已有记录时可能失败。
 
 ## 更新内容
 
-**1.1.0-current.5** 支持选择性导出、导入时自动创建缺失的额外目录，并提供单文件 Windows EXE。新版点击“导出对话”会自动列出本机活动和已归档记录，默认不选中任何记录；可逐条勾选、按项目选择或全选，再选择导出位置并点击“导出所选对话”。界面会提前列出需要一起导出的父对话。
+**1.1.0-current.6** 继续支持选择性导出、导入时自动创建缺失的额外目录，并提供单文件 Windows EXE。新版点击“导出对话”会自动列出本机活动和已归档记录，默认不选中任何记录；可逐条勾选、按项目选择或全选，再选择导出位置并点击“导出所选对话”。界面会提前列出需要一起导出的父对话。
 
 所选备份包含对话 JSONL、所选索引和 `codex-migrate-export.json` 元数据，保留名称与项目关系。它不复制整套数据库、其他对话、配置或日志。请在目标机器使用 current.4 或后续支持此格式的版本导入。项目源码、附件实体仍需另行复制。
 
@@ -25,9 +27,9 @@ CLI 可重复使用 `--thread`，例如 `codex-migrate export SOURCE --output-pa
 
 ## 下载安装
 
-图形界面推荐下载 [current.5 独立 EXE](https://github.com/QShuiOwO/codex-migrate-current/releases/download/v1.1.0-current.5/Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe)，直接双击运行，无需同目录的 CLI 或额外 VC++ 运行库。完整资产见 [current.5 发行页](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.5)。需要命令行工具时可选择下面的 ZIP。
+图形界面推荐下载 [current.6 独立 EXE](https://github.com/QShuiOwO/codex-migrate-current/releases/download/v1.1.0-current.6/Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe)，直接双击运行，无需同目录的 CLI 或额外 VC++ 运行库。完整资产见 [current.6 发行页](https://github.com/QShuiOwO/codex-migrate-current/releases/tag/v1.1.0-current.6)。需要命令行工具时可选择下面的 ZIP。
 
-从 [本 Fork 的 Releases](https://github.com/QShuiOwO/codex-migrate-current/releases) 下载 `Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip` 及对应 `.sha256` 文件，解压后：
+从 [本 Fork 的 Releases](https://github.com/QShuiOwO/codex-migrate-current/releases) 下载 `Codex-Migrate-Current-1.1.0-current.6-Windows-x64.zip` 及对应 `.sha256` 文件，解压后：
 
 - `codex-migrate-gui.exe`：图形界面。
 - `codex-migrate.exe`：命令行。
@@ -37,14 +39,14 @@ CLI 可重复使用 `--thread`，例如 `codex-migrate export SOURCE --output-pa
 可选 ZIP 内的程序由 GitHub Actions 使用 Windows MSVC 构建，尚未代码签名，需要 [Microsoft Visual C++ v14 x64 运行库](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。若提示缺少 `VCRUNTIME140.dll`，安装微软提供的 x64 Redistributable。运行前核对 ZIP 的 SHA-256：
 
 ```powershell
-(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.5-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.6-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 上游的 macOS/Linux 源码支持仍保留；本次适配没有这些平台的同等集成验证，也不提供对应发布包。
 
 ### Windows 单文件独立版
 
-单文件构建产物为 `Codex-Migrate-Current-1.1.0-current.5-Standalone-Windows-x64.exe`。只复制这个 EXE 即可双击打开，无需解压或额外安装 VC++ 运行库；GUI 已包含迁移引擎，无需同目录的命令行程序。新版历史导入仍需要目标电脑安装匹配的 Desktop / Codex 运行时，备份和项目文件也需要单独准备。
+当前源码的单文件构建产物为 `Codex-Migrate-Current-1.1.0-current.6-Standalone-Windows-x64.exe`。只复制这个 EXE 即可双击打开，无需解压或额外安装 VC++ 运行库；GUI 已包含迁移引擎，无需同目录的命令行程序。新版历史导入仍需要目标电脑安装匹配的 Desktop / Codex 运行时，备份和项目文件也需要单独准备。
 
 程序的“设置 → 关于独立运行版”保留原作者 MIT 署名，并可保存内置的完整第三方许可。运行时生成的日志、设置和迁移快照仍按正常流程保存。
 
@@ -73,7 +75,7 @@ CLI 可重复使用 `--thread`，例如 `codex-migrate export SOURCE --output-pa
 
 ## 验证与限制
 
-current.5 独立版构建通过 **49 项常规 Rust 测试、1 项 GUI 原生流程及 20 项原生迁移场景**，包括额外目录自动创建、失败回滚和同名文件保护；格式与 Clippy 检查通过。测试使用合成记录，未操作真实对话。独立 EXE 旁的 `VALIDATION.json` 保存本次校验结果；已发布版本的历史记录见 [验证记录](docs/current-validation.md)。
+current.6 GNU 独立版构建通过 **53 项常规 Rust 测试、1 项 GUI 原生流程及 23 项原生迁移场景**，包括额外目录自动创建、失败回滚和同名文件保护；格式与 Clippy 检查通过。测试使用合成记录，未操作真实对话。独立 EXE 旁的 `VALIDATION.json` 保存本次校验结果；已发布版本的历史记录见 [验证记录](docs/current-validation.md)。
 
 云端账号历史、附件实体、`thread_attachments`、生成物、其他系统和未来运行时均不在本次验证范围。回滚恢复的是迁移前快照，可能覆盖之后新增的对话或修改；应在继续聊天前验收，晚些时候回滚前另做当前备份。
 

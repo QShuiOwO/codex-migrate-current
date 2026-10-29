@@ -1,5 +1,13 @@
 # 当前版本验证记录
 
+## 2026-10-29 current.6 Windows 路径兼容修复
+
+本机更新为 Desktop `26.1023.6621.0` / `codex-cli 0.165.0-alpha.1.2`，state schema 62。current.5 的完整套件在第 5 项重复导入时失败；普通、归档、仅历史记录均能复现，回滚前后合成数据库和文件一致。
+
+current.6 将实际路径的规范形式用于校验，对跨设备映射中的扩展盘符/UNC 路径做等价处理，保留盘符根及目录边界。新增测试同时验证等价路径可接受、不同目录仍拒绝、Unix 路径仍区分大小写。格式、Clippy、53 项常规 Rust 测试通过；当前运行时下 23 项原生场景和 1 项 GUI 原生流程通过。此前失败的同一合成目标直接重试成功，对话/项目未重复且分叉消息完整。
+
+此处原生集成结果来自本地 GNU 构建；当前 JSON 汇总已更新为 current.6。GitHub CI 另检查并打包 MSVC ZIP，最终构建和文件校验信息随 Release 提供。没有操作真实账号对话，也未对真实 UNC 共享、Linux 或 GitHub MSVC 包做本次同等验证。
+
 ## 2026-10-24 current.5 选择性导出、自动创建目录与独立 EXE
 
 测试环境为 Windows x64、Desktop `26.1021.3705.0` / `codex-cli 0.164.0-alpha.11.1`。Rust 1.99.0 GNU / LLVM-MinGW MSVCRT 构建通过格式检查、Clippy、49 项常规 Rust 测试；另通过 1 项合成 GUI 导出—预览—导入流程和 20 项原生迁移场景。最新场景汇总见 [current-runtime-results.json](current-runtime-results.json)，不包含本机输出路径。
