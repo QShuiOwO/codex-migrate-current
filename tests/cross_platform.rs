@@ -1,13 +1,13 @@
+use codex_migrate::{model::PlatformKind, path_mapper, rollout};
+#[cfg(unix)]
 use codex_migrate::{
-    model::{ImportOptions, ImportTarget, PlatformKind},
-    operations, path_mapper, rollout,
+    model::{ImportOptions, ImportTarget},
+    operations,
 };
 use serde_json::json;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
+#[cfg(unix)]
+use std::{collections::BTreeSet, fs, path::Path};
 
 #[test]
 fn source_path_case_rules_survive_cross_platform_mapping() {
