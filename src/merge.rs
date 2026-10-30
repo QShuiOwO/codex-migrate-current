@@ -1,6 +1,7 @@
 use crate::discovery::Environment;
 use crate::model::{
-    ImportOptions, ImportPlan, MergeAction, PlannedThread, ScannedThread, SourceCatalog,
+    ImportOptions, ImportPlan, ImportTarget, MergeAction, PlannedThread, ScannedThread,
+    SourceCatalog,
 };
 use crate::path_mapper::{history_only_path, map_explicit, normalize};
 use crate::rollout;
@@ -60,6 +61,7 @@ pub fn build_plan(
         } else {
             mapped.ok_or_else(|| anyhow!("selected project is not mapped: {original_cwd}"))?
         };
+        let mapped_cwd = crate::path_mapper::local_directory(&mapped_cwd)?;
         let (action, mut reason) = match existing.get(thread_id) {
             None => (MergeAction::Import, "thread UUID is not present".to_owned()),
             Some(target) if target.record.sha256 == source_thread.record.sha256 => (
@@ -100,6 +102,13 @@ pub fn build_plan(
                 serde_json::Value::Bool(true),
             );
         }
+        let resume_in_cli = options.target == ImportTarget::Cli && !implicit && !history_only;
+        if resume_in_cli {
+            record.source = "cli".into();
+            record.thread_source = Some("user".into());
+            record.archived = false;
+            reason.push_str("; activate for codex resume in the mapped working directory");
+        }
         // Preflight the bytes actually kept/imported before starting any write transaction.
         let content = if matches!(
             action,
@@ -121,9 +130,7 @@ pub fn build_plan(
                 if let Some((old, _)) = options
                     .mappings
                     .iter()
-                    .filter(|(old, _)| {
-                        crate::path_mapper::prefix_matches(&path, old, cfg!(windows))
-                    })
+                    .filter(|(old, _)| crate::path_mapper::source_prefix_matches(&path, old))
                     .max_by_key(|(old, _)| old.len())
                 {
                     let target = map_explicit(old, &options.mappings, &environment.platform)
@@ -145,6 +152,7 @@ pub fn build_plan(
             }
         }
         threads.push(PlannedThread {
+            resume_in_cli,
             thread: record,
             source_path: source_thread.source_path.to_string_lossy().into_owned(),
             mapped_cwd: mapped_cwd.to_string_lossy().into_owned(),
@@ -163,6 +171,7 @@ pub fn build_plan(
         crate::path_mapper::validate_directory_destination(Path::new(directory))?;
     }
     Ok(ImportPlan {
+        target: options.target,
         source_codex_home: catalog.source_codex_home.clone(),
         codex_home: environment.codex_home.to_string_lossy().into_owned(),
         threads,

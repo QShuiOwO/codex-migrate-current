@@ -1,4 +1,4 @@
-name: Release Windows prerelease
+name: Release Windows and Ubuntu prerelease
 
 on:
   push:
@@ -39,9 +39,12 @@ jobs:
   windows:
     needs: validate
     uses: ./.github/workflows/windows-build.yml
+  ubuntu:
+    needs: validate
+    uses: ./.github/workflows/ubuntu-build.yml
   release:
-    needs: windows
-    runs-on: ubuntu-latest
+    needs: [windows, ubuntu]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -50,6 +53,12 @@ jobs:
         with:
           name: Codex-Migrate-Current-Windows-x64
           path: artifacts
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Codex-Migrate-Current-Ubuntu-24.04-x64
+          path: artifacts
+      - name: Verify both platform archives and checksums
+        run: python3 scripts/check-release-assets.py artifacts
       - name: Create or update draft prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,7 +72,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" artifacts/* --repo "$GITHUB_REPOSITORY" \
               --verify-tag --draft --prerelease --latest=false \
-              --title "Codex Migrate Current $RELEASE_TAG (Windows prerelease)" \
+              --title "Codex Migrate Current $RELEASE_TAG (Windows + Ubuntu prerelease)" \
               --notes-file docs/release-notes-current.md
           fi
           if [ "$PUBLISH" = true ]; then

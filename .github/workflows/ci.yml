@@ -14,6 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ubuntu:
+    name: Ubuntu 24.04 tests and package
+    uses: ./.github/workflows/ubuntu-build.yml
   windows:
     name: Windows tests and package
     uses: ./.github/workflows/windows-build.yml

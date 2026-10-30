@@ -29,6 +29,13 @@ cargo run --features gui --bin codex-migrate-gui
 
 ## Architecture
 
+Windows and Ubuntu share one source tree and version. Use a short-lived feature
+branch and a PR into `main`; both platform CI jobs should pass before merging.
+Keep OS-specific behavior behind Rust `cfg` conditions and packaging in `scripts/`.
+Desktop/CLI are import targets independent of the operating system. Use
+`Cargo.toml` / `Cargo.lock` for shared dependencies, and keep the backup format
+compatible across platforms. See `docs/publishing.md` for unified releases.
+
 - `scanner`: reads rollout JSONL and optional SQLite metadata.
 - `merge`: classifies UUID/hash/prefix conflicts.
 - `path_mapper`: normalizes POSIX, Windows, UNC, and WSL paths.

@@ -31,7 +31,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $NoticeDirectory $notice) -Destination $packageRoot
     }
     New-Item -ItemType Directory -Path (Join-Path $packageRoot 'docs') | Out-Null
-    foreach ($document in @('current-validation.md', 'current-runtime-results.json', 'publishing.md')) {
+    foreach ($document in @('current-validation.md', 'current-runtime-results.json', 'ubuntu-cli.md', 'ubuntu-validation.md', 'publishing.md')) {
         Copy-Item -LiteralPath "docs/$document" -Destination (Join-Path $packageRoot 'docs')
     }
     Copy-Item -LiteralPath 'docs/third-party' -Destination (Join-Path $packageRoot 'docs') -Recurse

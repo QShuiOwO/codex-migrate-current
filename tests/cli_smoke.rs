@@ -63,6 +63,8 @@ fn exports_scans_and_dry_runs_directory_backup() {
         .unwrap()
         .args([
             "import",
+            "--target",
+            "desktop",
             backup.to_str().unwrap(),
             "--codex-home",
             target.path().to_str().unwrap(),
@@ -207,6 +209,8 @@ fn imports_selected_thread_with_sqlite_fallback_and_rolls_back() {
         .env("PATH", "")
         .args([
             "import",
+            "--target",
+            "desktop",
             source.path().to_str().unwrap(),
             "--codex-home",
             target.path().to_str().unwrap(),
@@ -256,6 +260,8 @@ fn imports_selected_thread_with_sqlite_fallback_and_rolls_back() {
         .env("PATH", "")
         .args([
             "import",
+            "--target",
+            "desktop",
             source.path().to_str().unwrap(),
             "--codex-home",
             target.path().to_str().unwrap(),
@@ -316,6 +322,8 @@ fn history_only_uses_one_stable_project_directory() {
         .unwrap()
         .args([
             "import",
+            "--target",
+            "desktop",
             source.path().to_str().unwrap(),
             "--codex-home",
             target.path().to_str().unwrap(),
@@ -353,6 +361,8 @@ fn repeated_import_repairs_visibility_and_registers_project() {
             .env("PATH", "")
             .args([
                 "import",
+                "--target",
+                "desktop",
                 source.path().to_str().unwrap(),
                 "--codex-home",
                 target.path().to_str().unwrap(),

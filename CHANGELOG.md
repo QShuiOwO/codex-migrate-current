@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.7] - 2026-10-30
+
+- Maintain Windows x64 and Ubuntu 24.04 x64 in one source tree and version. Run both platform builds in CI and collect both packages and checksums into the same draft prerelease.
+- Add Desktop/CLI import targets to the GUI and CLI. Linux defaults to CLI; Windows/macOS default to Desktop. CLI imports activate selected archived/non-interactive sessions for `codex resume` in the mapped work directory.
+- Match the destination model provider and validate interactive directory/provider visibility through the native runtime. Preserve original metadata for repeat and round-trip imports, including provider changes and fork ancestors.
+- Match source Windows drive/UNC/extended paths independently of the target OS, keep Unix paths case-sensitive, map Windows permission globs, and resolve local workspace symlinks.
+- Discover Ubuntu npm/nvm installations from desktop launchers and use the native Linux Codex executable.
+- Add synthetic cross-platform, provider, round-trip and actual CLI picker tests. Preserve the existing Desktop migration, archive, project, selective export and rollback behavior.
+- Add Ubuntu build/usage/validation documentation. No cloud chat, project-source, or attachment migration is introduced.
+
 ## [1.1.0-current.6] - 2026-10-29
 
 - Accept equivalent Windows extended-length paths (`\\?\D:\...` and extended UNC paths) in directory mappings, database validation and rollout validation. Preserve drive roots and mapping boundaries, and reject genuinely different directories.

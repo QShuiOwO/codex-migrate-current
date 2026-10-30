@@ -1,4 +1,4 @@
-"""Collect locked Windows dependency licenses without accessing migration data."""
+"""Collect locked target-platform dependency licenses without accessing migration data."""
 
 import argparse
 import json

@@ -124,6 +124,7 @@ mod tests {
 
     fn planned(id: &str, title: &str) -> PlannedThread {
         PlannedThread {
+            resume_in_cli: false,
             thread: ThreadRecord {
                 id: id.to_owned(),
                 title: title.to_owned(),

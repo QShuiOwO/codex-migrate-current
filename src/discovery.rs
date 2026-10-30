@@ -54,6 +54,7 @@ pub fn discover(explicit_home: Option<&Path>) -> Result<Environment> {
     } else {
         find_executable("codex")
     };
+    let codex_executable = codex_executable.map(native_npm_runtime);
     let codex_version = codex_executable
         .as_deref()
         .and_then(|path| command_version(path).ok());
@@ -170,6 +171,104 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         env::var_os("PATH").as_deref(),
         env::var_os("LOCALAPPDATA").as_deref(),
     )
+    .or_else(|| {
+        #[cfg(target_os = "linux")]
+        if name == "codex" {
+            return find_linux_user_executable(&dirs::home_dir()?);
+        }
+        None
+    })
+}
+
+/// Desktop launchers do not inherit nvm's shell PATH.
+#[cfg(target_os = "linux")]
+fn find_linux_user_executable(home: &Path) -> Option<PathBuf> {
+    let mut directories = vec![
+        home.join(".local/bin"),
+        home.join(".npm-global/bin"),
+        home.join(".cargo/bin"),
+    ];
+    let nvm = env::var_os("NVM_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".nvm"));
+    let mut versions = std::fs::read_dir(nvm.join("versions/node"))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name();
+            let version = name
+                .to_str()?
+                .strip_prefix('v')?
+                .split('.')
+                .map(str::parse::<u32>)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .ok()?;
+            Some((version, entry.path().join("bin")))
+        })
+        .collect::<Vec<_>>();
+    versions.sort_by(|a, b| b.0.cmp(&a.0));
+    directories.extend(versions.into_iter().map(|(_, p)| p));
+    directories
+        .into_iter()
+        .map(|p| p.join("codex"))
+        .find(|p| is_executable(p))
+}
+
+fn is_executable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+/// Prefer npm's native Linux binary, avoiding a dependency on node in GUI PATH
+/// and allowing the transaction to own the actual App Server process.
+fn native_npm_runtime(executable: PathBuf) -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(real) = executable.canonicalize() {
+            if let Some(package) = real.parent().and_then(Path::parent) {
+                let is_codex = std::fs::read(package.join("package.json"))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                    .is_some_and(|v| v["name"] == "@openai/codex");
+                if is_codex {
+                    let (arch, npm_arch) = if cfg!(target_arch = "x86_64") {
+                        ("x86_64", "x64")
+                    } else {
+                        ("aarch64", "arm64")
+                    };
+                    let triple = format!("{arch}-unknown-linux-musl");
+                    let mut vendors = vec![
+                        package.join(format!(
+                            "node_modules/@openai/codex-linux-{npm_arch}/vendor"
+                        )),
+                        package.join("vendor"),
+                    ];
+                    if let Some(scope) = package.parent() {
+                        vendors.push(scope.join(format!("codex-linux-{npm_arch}/vendor")));
+                    }
+                    for vendor in vendors {
+                        for subdir in ["bin", "codex"] {
+                            let native = vendor.join(&triple).join(subdir).join("codex");
+                            if is_executable(&native) {
+                                return native;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    executable
 }
 
 fn find_executable_in(
@@ -202,7 +301,7 @@ fn find_executable_in(
     }
     for directory in path.into_iter().flat_map(env::split_paths) {
         let candidate = directory.join(name);
-        if candidate.is_file() {
+        if is_executable(&candidate) {
             return Some(candidate);
         }
         #[cfg(windows)]

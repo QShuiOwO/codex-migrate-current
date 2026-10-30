@@ -61,10 +61,11 @@ fn collect_workspace_paths(
                 } else if entry["path"]["type"] == "glob_pattern" {
                     if let Some(pattern) = entry["path"]["pattern"]
                         .as_str()
-                        .filter(|p| Path::new(p).is_absolute())
+                        .filter(|p| crate::path_mapper::is_absolute_source_path(p))
                     {
                         // Map the directory prefix while preserving the glob suffix.
-                        let prefix = pattern.split(['*', '?', '[']).next().unwrap_or(pattern);
+                        let pattern = crate::path_mapper::normalize(pattern);
+                        let prefix = pattern.split(['*', '?', '[']).next().unwrap_or(&pattern);
                         let directory = prefix
                             .rsplit_once('/')
                             .map(|(p, _)| p)
@@ -166,6 +167,8 @@ fn map_root(
     if !mapped.is_absolute() {
         anyhow::bail!("mapped root must be absolute: {}", mapped.display());
     }
+    // Permission entries may name files/globs, so canonicalize the workspace
+    // directory in the plan, not every policy entry here.
     Ok(mapped.to_string_lossy().into_owned())
 }
 
@@ -205,7 +208,7 @@ pub fn rewrite_policy_roots(
             {
                 if let Some(pattern) = path["pattern"]
                     .as_str()
-                    .filter(|p| Path::new(p).is_absolute())
+                    .filter(|p| crate::path_mapper::is_absolute_source_path(p))
                 {
                     path["pattern"] =
                         Value::String(map_root(pattern, mappings, cwd, history_only)?);
@@ -320,6 +323,56 @@ pub fn validate_cwd_file(path: &Path, cwd: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Adapt the provider and optionally promote sessions into interactive history.
+/// Keep provenance so repeat and round-trip imports can compare original bytes.
+pub fn prepare_runtime_history(
+    content: &[u8],
+    provider: Option<&str>,
+    interactive: bool,
+) -> Result<Vec<u8>> {
+    let Some(provider) = provider else {
+        return Ok(content.to_vec());
+    };
+    let mut output = Vec::with_capacity(content.len());
+    for line in content.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        let mut value: Value = serde_json::from_slice(line)?;
+        if value["type"] == "session_meta" {
+            let payload = value["payload"]
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("session_meta payload is not an object"))?;
+            if payload.get("model_provider").and_then(Value::as_str) == Some(provider)
+                && (!interactive
+                    || (payload.get("source").and_then(Value::as_str) == Some("cli")
+                        && payload.get("thread_source").and_then(Value::as_str) == Some("user")))
+            {
+                output.extend_from_slice(line);
+                output.push(b'\n');
+                continue;
+            }
+            if !payload.contains_key("codex_migrate_original_metadata") {
+                let original = ["source", "thread_source", "model_provider"]
+                    .into_iter()
+                    .filter_map(|key| payload.get(key).map(|v| (key.to_owned(), v.clone())))
+                    .collect::<serde_json::Map<_, _>>();
+                payload.insert(
+                    "codex_migrate_original_metadata".into(),
+                    Value::Object(original),
+                );
+            }
+            if interactive {
+                payload.insert("source".into(), Value::String("cli".into()));
+                payload.insert("thread_source".into(), Value::String("user".into()));
+            }
+            payload.insert("model_provider".into(), Value::String(provider.into()));
+            output.extend_from_slice(&serde_json::to_vec(&value)?);
+        } else {
+            output.extend_from_slice(line);
+        }
+        output.push(b'\n');
+    }
+    Ok(output)
+}
+
 pub fn canonicalize_cwd(content: &[u8]) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(content.len());
     for line in content.split(|byte| *byte == b'\n') {
@@ -332,6 +385,16 @@ pub fn canonicalize_cwd(content: &[u8]) -> Option<Vec<u8>> {
             Some("session_meta" | "turn_context")
         ) {
             if let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) {
+                if let Some(Value::Object(original)) =
+                    payload.remove("codex_migrate_original_metadata")
+                {
+                    for key in ["source", "thread_source", "model_provider"] {
+                        payload.remove(key);
+                        if let Some(value) = original.get(key) {
+                            payload.insert(key.into(), value.clone());
+                        }
+                    }
+                }
                 if payload.contains_key("cwd") {
                     payload.insert("cwd".to_owned(), Value::String("<mapped-cwd>".to_owned()));
                 }
@@ -367,6 +430,21 @@ pub fn canonicalize_cwd(content: &[u8]) -> Option<Vec<u8>> {
                                 if path.get(key).is_some_and(Value::is_string) {
                                     path[key] = Value::String("<mapped-root>".to_owned());
                                 }
+                            }
+                        } else if let Some(path) = entry
+                            .get_mut("path")
+                            .filter(|p| p["type"] == "glob_pattern")
+                        {
+                            if let Some(pattern) = path["pattern"]
+                                .as_str()
+                                .filter(|p| crate::path_mapper::is_absolute_source_path(p))
+                            {
+                                let pattern = crate::path_mapper::normalize(pattern);
+                                let suffix = pattern
+                                    .find(['*', '?', '['])
+                                    .map(|i| &pattern[i..])
+                                    .unwrap_or("");
+                                path["pattern"] = Value::String(format!("<mapped-root>/{suffix}"));
                             }
                         }
                     }
