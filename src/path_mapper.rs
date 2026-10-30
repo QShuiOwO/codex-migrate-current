@@ -12,7 +12,7 @@ pub struct PathMapping {
 
 /// Check a directory destination without creating anything during preview.
 pub fn validate_directory_destination(path: &Path) -> Result<()> {
-    if !path.is_absolute() {
+    if !path.is_absolute() || (!cfg!(windows) && is_windows_path(&path.to_string_lossy())) {
         anyhow::bail!(
             "project directory must be a local absolute path: {}",
             path.display()
@@ -61,11 +61,10 @@ pub fn map_path(
     thread_id: &str,
 ) -> PathBuf {
     let normalized = normalize(original);
-    let case_insensitive = matches!(platform, PlatformKind::Windows);
     let mut candidates = mappings
         .iter()
         .map(|mapping| (normalize(&mapping.source), &mapping.target))
-        .filter(|(source, _)| prefix_matches(&normalized, source, case_insensitive))
+        .filter(|(source, _)| source_prefix_matches(&normalized, source))
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(source, _)| std::cmp::Reverse(source.len()));
 
@@ -164,11 +163,10 @@ pub fn map_explicit(
     platform: &PlatformKind,
 ) -> Option<PathBuf> {
     let normalized = normalize(original);
-    let case_insensitive = matches!(platform, PlatformKind::Windows);
     mappings
         .iter()
         .map(|(source, target)| (normalize(source), target))
-        .filter(|(source, _)| prefix_matches(&normalized, source, case_insensitive))
+        .filter(|(source, _)| source_prefix_matches(&normalized, source))
         .max_by_key(|(source, _)| source.len())
         .map(|(source, target)| {
             let suffix = &normalized[source.len()..];
@@ -186,6 +184,35 @@ pub fn prefix_matches(path: &str, prefix: &str, insensitive: bool) -> bool {
         || path
             .strip_prefix(&prefix)
             .is_some_and(|rest| prefix.ends_with('/') || rest.starts_with('/'))
+}
+
+/// Source path semantics must not depend on the destination OS.
+pub fn source_prefix_matches(path: &str, prefix: &str) -> bool {
+    let path = normalize(path);
+    let prefix = normalize(prefix);
+    prefix_matches(&path, &prefix, is_windows_path(&prefix))
+}
+
+pub fn is_windows_path(path: &str) -> bool {
+    let path = normalize(path);
+    is_windows_drive(&path) || path.starts_with("//")
+}
+
+pub fn is_absolute_source_path(path: &str) -> bool {
+    Path::new(path).is_absolute() || is_windows_path(path)
+}
+
+/// Resolve existing symlink ancestors even when a mapped directory is new.
+/// The CLI filters sessions by its canonical working directory.
+pub fn local_directory(path: &Path) -> Result<PathBuf> {
+    validate_directory_destination(path)?;
+    for ancestor in path.ancestors() {
+        if ancestor.is_dir() {
+            let resolved = ancestor.canonicalize()?.join(path.strip_prefix(ancestor)?);
+            return Ok(PathBuf::from(normalize(&resolved.to_string_lossy())));
+        }
+    }
+    unreachable!("validated destination has an existing ancestor")
 }
 
 fn path_is_usable(path: &str, platform: &PlatformKind) -> bool {

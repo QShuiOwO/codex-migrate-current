@@ -134,9 +134,10 @@ impl AppServer {
         cwd: &Path,
         roots: &[String],
         paginated: bool,
+        model_provider: &str,
     ) -> Result<()> {
         let mut params = json!({"threadId": id, "path": path.to_string_lossy(),
-            "cwd": cwd.to_string_lossy(), "excludeTurns": true});
+            "cwd": cwd.to_string_lossy(), "modelProvider": model_provider, "excludeTurns": true});
         if paginated {
             params["runtimeWorkspaceRoots"] = json!(roots);
         }
@@ -154,6 +155,28 @@ impl AppServer {
             json!({"threadId": id, "includeTurns": false}),
         )?;
         Ok(())
+    }
+
+    /// Match the CLI picker's directory, provider, source and archive filters.
+    pub fn verify_cli_visible(&mut self, id: &str, cwd: &str, provider: &str) -> Result<()> {
+        let mut params = json!({"cwd": cwd, "archived": false, "sourceKinds": ["cli", "vscode"], "modelProviders": [provider], "limit": 100});
+        let mut cursors = HashSet::new();
+        loop {
+            let page = self.request("thread/list", params.clone())?;
+            let data = page["data"]
+                .as_array()
+                .ok_or_else(|| anyhow!("thread/list returned no data"))?;
+            if data.iter().any(|t| t["id"].as_str() == Some(id)) {
+                return Ok(());
+            }
+            match page["nextCursor"].as_str().filter(|c| !c.is_empty()) {
+                Some(cursor) if cursors.insert(cursor.to_owned()) => {
+                    params["cursor"] = json!(cursor)
+                }
+                Some(_) => bail!("thread/list repeated a pagination cursor"),
+                None => bail!("thread {id} is not visible to codex resume in {cwd}"),
+            }
+        }
     }
 
     /// Validate every page; a metadata row alone does not prove readable history.

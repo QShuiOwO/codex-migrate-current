@@ -4,8 +4,8 @@ use crate::discovery::{self, Environment};
 use crate::html_export::{self, HtmlExportSummary};
 use crate::merge;
 use crate::model::{
-    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, PlatformKind, ScannedThread,
-    SourceCatalog, SourceProject, SourceSession,
+    DiagnosticReport, ImportOptions, ImportPlan, ImportTarget, MergeAction, PlatformKind,
+    ScannedThread, SourceCatalog, SourceProject, SourceSession,
 };
 use crate::path_mapper::{map_explicit, normalize};
 use crate::rollout;
@@ -60,7 +60,7 @@ pub fn resolve_codex_root(selected: &Path) -> Result<PathBuf> {
     if is_codex_root(selected) {
         return Ok(selected.to_path_buf());
     }
-    let candidates = ["Codex_backup", "Codex", ".codex"]
+    let candidates = ["Codex_backup", "Codex", ".codex", "backup"]
         .into_iter()
         .map(|name| selected.join(name))
         .filter(|path| is_codex_root(path))
@@ -68,7 +68,7 @@ pub fn resolve_codex_root(selected: &Path) -> Result<PathBuf> {
     match candidates.as_slice() {
         [only] => Ok(only.clone()),
         [] => Err(anyhow!(
-            "{} is not a Codex folder and contains no Codex_backup/Codex/.codex child",
+            "{} is not a Codex folder and contains no Codex_backup/Codex/.codex/backup child",
             selected.display()
         )),
         _ => Err(anyhow!(
@@ -449,7 +449,8 @@ fn execute_import(
     progress: &mut impl FnMut(String),
 ) -> Result<ImportSummary> {
     let mut environment = initial_environment.clone();
-    let modern = plan.threads.iter().any(|t| t.thread.paginated())
+    let modern = plan.target == ImportTarget::Cli
+        || plan.threads.iter().any(|t| t.thread.paginated())
         || environment
             .state_db
             .as_deref()
@@ -457,7 +458,7 @@ fn execute_import(
             .transpose()?
             .unwrap_or(false);
     if environment.codex_executable.is_none() && (modern || environment.state_db.is_none()) {
-        anyhow::bail!("current native Codex runtime is required; set CODEX_MIGRATE_CODEX_BIN to its codex.exe path");
+        anyhow::bail!("current native Codex runtime is required; install Codex CLI or set CODEX_MIGRATE_CODEX_BIN to the codex (Windows: codex.exe) executable");
     }
     fs::create_dir_all(&environment.codex_home)?;
     fs::create_dir_all(&environment.sqlite_home)?;
@@ -547,9 +548,31 @@ fn execute_import(
         let mut refreshed_count = 0;
         let mut skipped = 0;
         let mut installed = existing_by_id.clone();
+        let mut runtime_providers = BTreeMap::new();
         for planned in &plan.threads {
             let target = PathBuf::from(&planned.target_path);
             let mapped_cwd = PathBuf::from(&planned.mapped_cwd);
+            if server.is_some() && !runtime_providers.contains_key(&planned.mapped_cwd) {
+                let config = server
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("CLI import requires Codex runtime"))?
+                    .request(
+                        "config/read",
+                        serde_json::json!({"cwd": planned.mapped_cwd, "includeLayers": false}),
+                    )?;
+                let provider = config["config"]["model_provider"]
+                    .as_str()
+                    .unwrap_or("openai")
+                    .to_owned();
+                progress(format!(
+                    "Target provider for {}: {provider}",
+                    planned.mapped_cwd
+                ));
+                runtime_providers.insert(planned.mapped_cwd.clone(), provider);
+            }
+            let runtime_provider = runtime_providers
+                .get(&planned.mapped_cwd)
+                .map(String::as_str);
             match planned.action {
                 MergeAction::SkipIdentical | MergeAction::KeepTargetLonger => {
                     progress(format!("Refreshing Codex index for {}", planned.thread.id));
@@ -559,6 +582,11 @@ fn execute_import(
                         &mapped_cwd,
                         &plan.mappings,
                         planned.history_only,
+                    )?;
+                    let rewritten = rollout::prepare_runtime_history(
+                        &rewritten,
+                        runtime_provider,
+                        planned.resume_in_cli,
                     )?;
                     let rewritten = rollout::rebase_history_offsets(&rewritten, &installed)?;
                     transaction.backup_replaced(&target)?;
@@ -597,6 +625,8 @@ fn execute_import(
                 &plan.mappings,
                 planned.history_only,
             )?;
+            let bytes =
+                rollout::prepare_runtime_history(&bytes, runtime_provider, planned.resume_in_cli)?;
             let bytes = rollout::rebase_history_offsets(&bytes, &installed)?;
             if planned.action == MergeAction::ReplaceWithLonger {
                 if let Some(previous) = existing_by_id.get(&planned.thread.id) {
@@ -657,7 +687,7 @@ fn execute_import(
             .map(sqlite_adapter::has_projects)
             .transpose()?
             .unwrap_or(false);
-        if native_projects && !plan.threads.is_empty() {
+        if plan.target == ImportTarget::Desktop && native_projects && !plan.threads.is_empty() {
             progress("Registering native Desktop projects and thread assignments".to_owned());
             register_native_projects(
                 &environment,
@@ -673,7 +703,7 @@ fn execute_import(
             .filter(|thread| !thread.history_only)
             .map(|thread| thread.mapped_cwd.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        if !native_projects && !projects.is_empty() {
+        if plan.target == ImportTarget::Desktop && !native_projects && !projects.is_empty() {
             progress("Registering projects in Codex Desktop".to_owned());
             let state_path = desktop_state::state_path(&environment.codex_home);
             if state_path.exists() {
@@ -709,6 +739,22 @@ fn execute_import(
                 )?
                 .ok_or_else(|| anyhow!("archived rollout absent"))?;
                 installed.insert(planned.thread.id.clone(), PathBuf::from(path));
+            }
+        }
+        if plan.target == ImportTarget::Cli {
+            let server = server
+                .as_mut()
+                .ok_or_else(|| anyhow!("CLI verification requires Codex runtime"))?;
+            for planned in plan.threads.iter().filter(|t| t.resume_in_cli) {
+                server.verify_cli_visible(
+                    &planned.thread.id,
+                    &planned.mapped_cwd,
+                    &runtime_providers[&planned.mapped_cwd],
+                )?;
+                progress(format!(
+                    "Ready for codex resume: {} ({})",
+                    planned.thread.id, planned.mapped_cwd
+                ));
             }
         }
         let refreshed = discovery::discover(Some(&environment.codex_home))?;
@@ -800,14 +846,23 @@ fn register_and_index(
         .unwrap_or_else(|| vec![cwd.to_string_lossy().into_owned()]);
     let mut actual = rollout_path.to_path_buf();
     let mut record = thread.clone();
-    if thread.archived {
+    if let Some(provider) = first["payload"]["model_provider"].as_str() {
+        record.model_provider = provider.to_owned();
+    }
+    if let Some(database) = environment.state_db.as_deref() {
+        sqlite_adapter::update_model_provider(database, &thread.id, &record.model_provider)?;
+    }
+    if thread.archived || rollout_path.starts_with(environment.codex_home.join("archived_sessions"))
+    {
         if let Some(server) = server.as_mut() {
             let refreshed = discovery::discover(Some(&environment.codex_home))?;
             let database = refreshed
                 .state_db
                 .as_deref()
                 .ok_or_else(|| anyhow!("runtime did not initialize the state DB"))?;
-            sqlite_adapter::upsert_thread(database, thread, rollout_path, cwd)?;
+            let mut archived = record.clone();
+            archived.archived = true;
+            sqlite_adapter::upsert_thread(database, &archived, rollout_path, cwd)?;
             let result = server.request(
                 "thread/unarchive",
                 serde_json::json!({"threadId":thread.id}),
@@ -822,7 +877,16 @@ fn register_and_index(
     }
     let app_server_result = server
         .ok_or_else(|| anyhow!("Codex executable was not found"))
-        .and_then(|server| server.register(&actual, &thread.id, cwd, &roots, thread.paginated()));
+        .and_then(|server| {
+            server.register(
+                &actual,
+                &thread.id,
+                cwd,
+                &roots,
+                thread.paginated(),
+                &record.model_provider,
+            )
+        });
     let refreshed = discovery::discover(Some(&environment.codex_home))?;
     let state_db = refreshed
         .state_db

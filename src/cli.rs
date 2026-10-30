@@ -1,4 +1,4 @@
-use crate::model::ImportOptions;
+use crate::model::{ImportOptions, ImportTarget};
 use crate::operations;
 use crate::path_mapper::{normalize, parse_mapping};
 use anyhow::Result;
@@ -51,6 +51,9 @@ struct ScanArgs {
 #[derive(Debug, Args)]
 struct ImportArgs {
     source: PathBuf,
+    /// CLI makes selected sessions active and visible in `codex resume`.
+    #[arg(long, value_enum, default_value_t = ImportTarget::for_platform())]
+    target: ImportTarget,
     #[arg(long)]
     codex_home: Option<PathBuf>,
     #[arg(long)]
@@ -74,6 +77,8 @@ struct RollbackArgs {
 
 #[derive(Debug, Args)]
 struct RebindArgs {
+    #[arg(long, value_enum, default_value_t = ImportTarget::for_platform())]
+    target: ImportTarget,
     #[arg(long)]
     codex_home: Option<PathBuf>,
     #[arg(long = "thread")]
@@ -149,6 +154,20 @@ pub fn run(cli: Cli) -> Result<()> {
                     "import completed; transaction id: {}",
                     summary.transaction_id
                 );
+                if args.target == ImportTarget::Cli {
+                    for cwd in plan
+                        .threads
+                        .iter()
+                        .filter(|t| t.resume_in_cli)
+                        .map(|t| &t.mapped_cwd)
+                        .collect::<BTreeSet<_>>()
+                    {
+                        println!("Open a terminal in {cwd} and run: codex resume");
+                    }
+                    if args.codex_home.is_some() {
+                        println!("Use the same CODEX_HOME ({}) and CODEX_SQLITE_HOME when starting Codex.", plan.codex_home);
+                    }
+                }
             }
         }
         Commands::Rebind(args) => {
@@ -160,6 +179,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 .map(|session| session.thread.id.clone())
                 .collect::<BTreeSet<_>>();
             let options = ImportOptions {
+                target: args.target,
                 selected_thread_ids: if args.threads.is_empty() {
                     all_ids
                 } else {
@@ -251,6 +271,7 @@ fn build_options(
         .map(|path| normalize(path))
         .collect();
     Ok(ImportOptions {
+        target: args.target,
         selected_thread_ids: selected,
         mappings,
         history_only_projects,

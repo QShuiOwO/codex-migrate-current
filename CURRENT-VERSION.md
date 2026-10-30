@@ -1,4 +1,16 @@
-# 当前 ChatGPT Desktop 适配版
+# Windows / Ubuntu 统一适配版
+
+## current.7：2026-10-30 更新
+
+当前源码版本为 `1.1.0-current.7`。Windows x64 和 Ubuntu 24.04 x64 共用 `src/`、备份格式和版本号，分别构建 Windows ZIP 与 Ubuntu tar.gz。两个平台的 CI 均通过后方可进入统一发布流程；发布标签生成包含两端包及校验值的预发布草稿。
+
+GUI 可选择 Desktop / CLI 导入目标。Ubuntu 默认 CLI：读取备份、选择本机工作文件夹并导入后，在该目录运行 `codex resume` 即可选择会话继续。Windows 默认 Desktop，保留项目注册流程；也可显式选择 CLI。命令行使用 `--target cli` 或 `--target desktop`。
+
+CLI 模式恢复所选归档会话，映射工作区和权限路径，适配目标服务商，并通过原生接口校验目录/服务商筛选后的可见性。分叉祖先、旧历史、名称、重复导入及事务回滚继续保留。原始来源和服务商元数据用于往返比较；建议两台机器都使用 current.7。
+
+Ubuntu 说明与本机验证见 [Ubuntu 使用指南](docs/ubuntu-cli.md)、[Ubuntu 验证记录](docs/ubuntu-validation.md)。Windows 的既有运行时验收记录见 [历史验证](docs/current-validation.md)；新增 Windows 构建结果以 current.7 CI 为准。发布流程见 [维护说明](docs/publishing.md)。
+
+以下为 current.6 及更早版本的历史记录，其中的“当前/本次”指对应历史版本。
 
 ## current.6：2026-10-29 更新
 

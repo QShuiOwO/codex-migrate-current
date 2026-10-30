@@ -187,6 +187,17 @@ pub fn upsert_thread(
     Ok(())
 }
 
+/// Keep an existing row consistent with the rewritten rollout before native
+/// resume checks its provider. The caller has already snapshotted this DB.
+pub fn update_model_provider(path: &Path, id: &str, provider: &str) -> Result<()> {
+    let connection = Connection::open(path)?;
+    connection.execute(
+        "UPDATE threads SET model_provider=?1 WHERE id=?2",
+        rusqlite::params![provider, id],
+    )?;
+    Ok(())
+}
+
 pub fn has_projects(path: &Path) -> Result<bool> {
     table_exists(&open_readable(path)?, "projects")
 }

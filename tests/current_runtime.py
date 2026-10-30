@@ -126,6 +126,8 @@ def main():
     results = {'runtime': subprocess.check_output([str(args.codex_bin), '--version'], text=True).strip(), 'cases': [], 'root': str(root)}
 
     def run(home, arguments, success=True, sqlite_home=None, runtime=True, executable_override=None):
+        if arguments[0] in ('import', 'rebind'):
+            arguments = [*arguments, '--target', 'desktop']
         env = dict(os.environ, CODEX_MIGRATE_CODEX_BIN=str((executable_override or args.codex_bin).resolve()) if runtime else '', CODEX_SQLITE_HOME=str(sqlite_home or home), CODEX_MIGRATE_LOG_DIR=str(root / 'diagnostic-logs'))
         env.pop('CODEX_HOME', None)
         for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'): env.pop(key, None)

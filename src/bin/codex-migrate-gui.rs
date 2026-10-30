@@ -4,8 +4,8 @@
 )]
 
 use codex_migrate::model::{
-    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SourceCatalog, SourceProject,
-    SourceSession,
+    DiagnosticReport, ImportOptions, ImportPlan, ImportTarget, MergeAction, SourceCatalog,
+    SourceProject, SourceSession,
 };
 use codex_migrate::operations::{self, ImportSummary, TransactionSummary, VerificationReport};
 use codex_migrate::path_mapper::{map_explicit, normalize};
@@ -186,8 +186,8 @@ impl UiProject {
             .keys()
             .filter(|root| {
                 paths.iter().any(|path| {
-                    !codex_migrate::path_mapper::prefix_matches(path, &cwd, cfg!(windows))
-                        && codex_migrate::path_mapper::prefix_matches(path, root, cfg!(windows))
+                    !codex_migrate::path_mapper::source_prefix_matches(path, &cwd)
+                        && codex_migrate::path_mapper::source_prefix_matches(path, root)
                 })
             })
             .cloned()
@@ -234,6 +234,7 @@ enum TaskResult {
 }
 
 struct MigrationApp {
+    import_target: ImportTarget,
     page: Page,
     step: ImportStep,
     source_folder: String,
@@ -287,6 +288,7 @@ impl MigrationApp {
         let chinese = matches!(settings.language, LanguagePreference::Chinese)
             || matches!(settings.language, LanguagePreference::System) && system_chinese;
         Self {
+            import_target: ImportTarget::for_platform(),
             page: Page::Import,
             step: ImportStep::Choose,
             source_folder: String::new(),
@@ -711,7 +713,8 @@ impl MigrationApp {
 
     fn rebind(&mut self) {
         let target = optional_path(&self.target_folder);
-        let options = options_from_projects(&self.repair_projects);
+        let mut options = options_from_projects(&self.repair_projects);
+        options.target = self.import_target;
         self.start_task(move |sender| {
             let progress_sender = sender.clone();
             let result = operations::rebind_existing(target.as_deref(), &options, move |message| {
@@ -892,7 +895,9 @@ impl MigrationApp {
     }
 
     fn import_options(&self) -> ImportOptions {
-        options_from_projects(&self.projects)
+        let mut options = options_from_projects(&self.projects);
+        options.target = self.import_target;
+        options
     }
 
     fn selected_count(&self) -> usize {
@@ -1150,6 +1155,21 @@ impl MigrationApp {
         let zh = self.chinese();
         card(ui, |ui| {
             ui.strong(tr(zh, "来源与目标", "Source and target"));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label(tr(zh, "导入后使用", "Continue in"));
+                ui.selectable_value(&mut self.import_target, ImportTarget::Cli, "Codex CLI");
+                ui.selectable_value(
+                    &mut self.import_target,
+                    ImportTarget::Desktop,
+                    "ChatGPT Desktop",
+                );
+            });
+            if self.import_target == ImportTarget::Cli {
+                ui.label(tr(zh,
+                    "选择本机工作文件夹后，可在该文件夹的终端运行 codex resume。所选归档会话将恢复为活动会话。",
+                    "Choose local work folders, then run codex resume in each folder. Selected archived sessions become active."));
+            }
             ui.add_space(14.0);
             folder_row(
                 ui,
@@ -1169,8 +1189,8 @@ impl MigrationApp {
                 ui.label(
                     RichText::new(tr(
                         zh,
-                        "支持精简 Codex/ 或完整 .codex/ 文件夹",
-                        "Supports compact Codex/ and full .codex/ folders",
+                        "支持 Windows / Ubuntu 的 backup、Codex_backup、Codex 和 .codex 文件夹",
+                        "Supports Windows / Ubuntu backup, Codex_backup, Codex and .codex folders",
                     ))
                     .small()
                     .color(MUTED),
@@ -2650,15 +2670,14 @@ fn extra_root_mappings(project: &SourceProject) -> BTreeMap<String, String> {
             );
         }
     }
-    let insensitive = cfg!(windows);
     let cwd = normalize(&project.original_cwd);
     paths
         .iter()
         .filter(|path| {
-            !codex_migrate::path_mapper::prefix_matches(path, &cwd, insensitive)
+            !codex_migrate::path_mapper::source_prefix_matches(path, &cwd)
                 && !paths.iter().any(|parent| {
                     parent.len() < path.len()
-                        && codex_migrate::path_mapper::prefix_matches(path, parent, insensitive)
+                        && codex_migrate::path_mapper::source_prefix_matches(path, parent)
                 })
         })
         .map(|path| {
@@ -2745,6 +2764,7 @@ fn options_from_projects(projects: &[UiProject]) -> ImportOptions {
         }
     }
     ImportOptions {
+        target: ImportTarget::Desktop,
         selected_thread_ids: selected_ids(projects),
         mappings,
         history_only_projects,
@@ -3591,8 +3611,8 @@ fn import_success_modal(
                     ui.label(
                         RichText::new(tr(
                             zh,
-                            "重新打开 Codex 后即可查看更新后的项目与会话。",
-                            "Reopen Codex to view the updated projects and sessions.",
+                            "CLI 模式：在所选工作文件夹打开终端，运行 codex resume 并选择会话继续。Desktop 模式：重新打开应用。",
+                            "CLI: open a terminal in the selected work folder and run codex resume. Desktop: reopen the app.",
                         ))
                         .size(13.0)
                         .color(TEXT),

@@ -90,8 +90,38 @@ pub struct ExportManifest {
     pub threads: Vec<ThreadRecord>,
 }
 
+/// Desktop retains archive/project state; CLI makes selected sessions resumable.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportTarget {
+    #[default]
+    Desktop,
+    Cli,
+}
+
+impl ImportTarget {
+    pub fn for_platform() -> Self {
+        if cfg!(target_os = "linux") {
+            Self::Cli
+        } else {
+            Self::Desktop
+        }
+    }
+}
+
+impl std::fmt::Display for ImportTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Desktop => "desktop",
+            Self::Cli => "cli",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportOptions {
+    #[serde(default)]
+    pub target: ImportTarget,
     pub selected_thread_ids: BTreeSet<String>,
     pub mappings: BTreeMap<String, String>,
     pub history_only_projects: BTreeSet<String>,
@@ -130,6 +160,8 @@ pub enum MergeAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlannedThread {
+    #[serde(default)]
+    pub resume_in_cli: bool,
     pub thread: ThreadRecord,
     pub source_path: String,
     pub mapped_cwd: String,
@@ -141,6 +173,8 @@ pub struct PlannedThread {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportPlan {
+    #[serde(default)]
+    pub target: ImportTarget,
     pub source_codex_home: String,
     pub codex_home: String,
     pub threads: Vec<PlannedThread>,
