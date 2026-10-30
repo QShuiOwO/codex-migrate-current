@@ -20,3 +20,18 @@ jobs:
   windows:
     name: Windows tests and package
     uses: ./.github/workflows/windows-build.yml
+  packages:
+    name: Verify unified Windows and Ubuntu packages
+    needs: [windows, ubuntu]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Codex-Migrate-Current-Windows-x64
+          path: artifacts
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Codex-Migrate-Current-Ubuntu-24.04-x64
+          path: artifacts
+      - run: python3 scripts/check-release-assets.py artifacts

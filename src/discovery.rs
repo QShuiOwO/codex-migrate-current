@@ -166,18 +166,16 @@ fn read_schema_version(path: &Path) -> Result<Option<i64>> {
 }
 
 fn find_executable(name: &str) -> Option<PathBuf> {
-    find_executable_in(
+    let executable = find_executable_in(
         name,
         env::var_os("PATH").as_deref(),
         env::var_os("LOCALAPPDATA").as_deref(),
-    )
-    .or_else(|| {
-        #[cfg(target_os = "linux")]
-        if name == "codex" {
-            return find_linux_user_executable(&dirs::home_dir()?);
-        }
-        None
-    })
+    );
+    #[cfg(target_os = "linux")]
+    if executable.is_none() && name == "codex" {
+        return find_linux_user_executable(&dirs::home_dir()?);
+    }
+    executable
 }
 
 /// Desktop launchers do not inherit nvm's shell PATH.
