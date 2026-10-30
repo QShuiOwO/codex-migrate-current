@@ -61,7 +61,13 @@ pub fn build_plan(
         } else {
             mapped.ok_or_else(|| anyhow!("selected project is not mapped: {original_cwd}"))?
         };
-        let mapped_cwd = crate::path_mapper::local_directory(&mapped_cwd)?;
+        // CLI directory filtering needs the canonical location. Keep Desktop's
+        // existing path spelling (including Windows 8.3 aliases) unchanged.
+        let mapped_cwd = if options.target == ImportTarget::Cli {
+            crate::path_mapper::local_directory(&mapped_cwd)?
+        } else {
+            mapped_cwd
+        };
         let (action, mut reason) = match existing.get(thread_id) {
             None => (MergeAction::Import, "thread UUID is not present".to_owned()),
             Some(target) if target.record.sha256 == source_thread.record.sha256 => (
