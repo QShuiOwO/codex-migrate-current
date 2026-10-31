@@ -1,16 +1,17 @@
-## Codex Migrate Current 1.1.0-current.7
+## Codex Migrate Current 1.1.0-current.8
 
-Windows x64 与 Ubuntu 24.04 x64 统一维护：同一源码、版本号与备份格式，在同一个 Release 提供两个平台包。保留 Desktop 项目注册、选择性导出、分叉祖先、分页历史、额外目录创建与事务回滚。
+修复选择性导出分叉会话时误报 `source contains duplicate thread IDs; resolve duplicate rollout files before export` 的问题。建议遇到该提示的 current.7 用户升级；无需删除原始对话文件。
 
-Ubuntu GUI 默认使用 Codex CLI 导入模式。读取 Windows 的 `backup` / `Codex_backup`，选择会话和本机工作文件夹，导入后在该目录运行 `codex resume` 即可选择会话继续。Ubuntu 也可导出备份，在 Windows 映射到本机目录后导入。建议两端都升级到 current.7，特别是相同会话的往返合并。
+部分分叉记录同时包含自身会话头和复制进来的父会话头。旧扫描器使用后出现的父 ID 覆盖子 ID，使不同会话被当成重复记录。current.8 以首条会话头确定 ID、工作目录、模型服务商和继承信息，继续保留全部历史消息。真正重复的会话文件仍会被阻止导出。
 
-新增 `--target cli|desktop`；操作系统与导入目标独立，Windows 也可使用 CLI 模式。CLI 模式恢复所选归档/非交互记录的列表可见性，适配目标服务商，保留祖先历史与原始元数据。跨系统映射支持 Windows 盘符大小写、UNC、扩展路径与权限 glob，Unix 路径保持大小写区分。
+升级后关闭旧迁移工具，打开新版并重新读取/刷新对话列表，再勾选导出。正式导出前，退出使用目标历史库的 Desktop / Codex CLI 会话。
 
-下载匹配系统的包及其校验文件：
+两个平台共用同一源码和版本：
 
-- `Codex-Migrate-Current-1.1.0-current.7-Windows-x64.zip`：GUI 与 CLI，需 VC++ v14 x64 运行库。
-- `Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz`：GUI 与 CLI，解压后运行 `./codex-migrate-gui`。
+- `Codex-Migrate-Current-1.1.0-current.8-Windows-x64.zip`：GUI 与 CLI，需 VC++ v14 x64 运行库。
+- `Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz`：GUI 与 CLI，解压后运行 `./codex-migrate-gui`。
+- 两个压缩包均附 SHA-256 文件，内含许可证、第三方许可和程序校验值。
 
-Ubuntu 本机验收使用 Rust 1.99.1 / Codex CLI 0.166.0，包含 56 项常规 Rust 测试、GUI 原生流程、23 项 Desktop 引擎场景、9 项 CLI/往返场景及真实 `codex resume` 界面测试。发布工作流要求 Windows 和 Ubuntu 的 CI 构建与测试均成功。Windows Desktop 实机验收范围单独记录，不将跨平台 CI 等同于 Desktop 端到端验收。
+合成回归覆盖多个内联分叉的扫描、选择性导出、再次导出、源文件保持不变、真正重复 ID 的拒绝，以及真实 Codex 导入/恢复父子消息。本机 Ubuntu 常规 Rust 测试增至 59 项；Windows、Ubuntu CI 和统一产物校验须通过后才能进入发布流程。
 
-本次仍为预发布版。仅迁移本地 Codex 代码对话，项目源码、附件实体和 Chat/Work 云端历史需要另行处理。测试只使用合成记录；导入前退出使用目标历史库的 Codex / Desktop，验收后再继续聊天。
+保留 current.7 的 Windows ↔ Ubuntu 迁移、Desktop/CLI 导入目标、路径/服务商适配、分页历史和事务回滚。本次仍为 Pre-release；Windows 编译与测试不等于 Desktop 实机验收，项目源码、附件实体和云端聊天历史仍不由该工具迁移。

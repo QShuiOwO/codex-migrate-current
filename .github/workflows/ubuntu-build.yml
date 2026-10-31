@@ -38,6 +38,7 @@ jobs:
           npm install --global @openai/codex@0.166.0
           python3 tests/current_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
           python3 tests/cli_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
+          python3 tests/inline_fork_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
           python3 tests/cli_tui.py --codex-bin "$(command -v codex)"
           CODEX_MIGRATE_CODEX_BIN="$(command -v codex)" cargo test --locked --features gui --bin codex-migrate-gui -- --ignored
       - name: Collect notices and package Ubuntu binaries
