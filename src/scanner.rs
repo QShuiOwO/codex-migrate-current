@@ -157,6 +157,7 @@ fn scan_rollout(
     let mut title = None;
     let mut first_user_message = None;
     let mut extra = BTreeMap::new();
+    let mut seen_session_meta = false;
 
     for (index, line) in reader.lines().enumerate() {
         let line =
@@ -164,7 +165,11 @@ fn scan_rollout(
         let value: Value = serde_json::from_str(&line)
             .with_context(|| format!("invalid JSON line {} in {}", index + 1, path.display()))?;
         match value.get("type").and_then(Value::as_str) {
-            Some("session_meta") => {
+            Some("session_meta") if !seen_session_meta => {
+                // The first header identifies this rollout. Forks can contain
+                // copied ancestor headers later in their inline history; those
+                // must not replace the child's identity or lineage metadata.
+                seen_session_meta = true;
                 let payload = &value["payload"];
                 for key in [
                     "history_mode",
@@ -563,5 +568,53 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert!(threads[0].record.archived);
         assert_eq!(threads[0].record.cwd, "/项目/论文");
+    }
+
+    #[test]
+    fn inline_ancestor_headers_do_not_replace_the_rollout_identity_or_lineage() {
+        let home = TempDir::new().unwrap();
+        let sessions = home.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let child = serde_json::json!({"type":"session_meta","payload":{
+            "id":"child","timestamp":"2026-10-24T00:00:00Z","cwd":"/child",
+            "source":"cli","thread_source":"user","model_provider":"child-provider",
+            "cli_version":"0.166.0","history_mode":"paginated","forked_from_id":"parent",
+            "runtime_workspace_roots":["/child"],"originator":"child-origin"
+        }});
+        let ancestor = serde_json::json!({"type":"session_meta","payload":{
+            "id":"parent","timestamp":"2026-10-01T00:00:00Z","cwd":"/parent",
+            "source":"vscode","thread_source":"other","model_provider":"parent-provider",
+            "cli_version":"0.164.0","history_mode":"legacy","forked_from_id":"grandparent",
+            "history_base":{"thread_id":"grandparent","end_ordinal_exclusive":3,"end_byte_offset":10},
+            "runtime_workspace_roots":["/parent"],"originator":"parent-origin"
+        }});
+        let message = serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"Preserved inline history"}});
+        let bytes = format!("{child}\n{ancestor}\n{message}\n");
+        fs::write(sessions.join("rollout-child.jsonl"), &bytes).unwrap();
+        let threads = scan_codex_home(home.path(), None).unwrap();
+        let record = &threads[0].record;
+        assert_eq!(record.id, "child");
+        assert_eq!(record.cwd, "/child");
+        assert_eq!(record.source, "cli");
+        assert_eq!(record.thread_source.as_deref(), Some("user"));
+        assert_eq!(record.model_provider, "child-provider");
+        assert_eq!(record.cli_version, "0.166.0");
+        assert_eq!(
+            record.created_at,
+            parse_timestamp("2026-10-24T00:00:00Z").unwrap()
+        );
+        assert!(record.paginated());
+        assert_eq!(record.extra["forked_from_id"], "parent");
+        assert_eq!(record.extra["originator"], "child-origin");
+        assert_eq!(
+            record.extra["runtime_workspace_roots"],
+            serde_json::json!(["/child"])
+        );
+        assert!(
+            record.history_parent().is_none(),
+            "inline history must not inherit an external ancestor dependency"
+        );
+        assert_eq!(record.first_user_message, "Preserved inline history");
+        assert_eq!(threads[0].content, bytes.as_bytes());
     }
 }

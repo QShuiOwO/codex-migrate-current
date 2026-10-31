@@ -1,6 +1,6 @@
 # Ubuntu 24.04 与 Windows 双向迁移
 
-`1.1.0-current.7` 统一版本支持将 Windows ChatGPT Desktop 的**本地 Codex 对话**迁移到 Ubuntu 24.04 Codex CLI，也支持将 Ubuntu 的会话导出为同一备份格式，再由 Windows 导入。普通 ChatGPT 云端聊天导出不属于此格式。
+`1.1.0-current.8` 统一版本支持将 Windows ChatGPT Desktop 的**本地 Codex 对话**迁移到 Ubuntu 24.04 Codex CLI，也支持将 Ubuntu 的会话导出为同一备份格式，再由 Windows 导入。普通 ChatGPT 云端聊天导出不属于此格式。
 
 ## Ubuntu 安装和启动
 
@@ -73,7 +73,7 @@ GUI 的“导出对话”可勾选会话并保存到 `Codex_backup`。CLI：
   --map '/home/alice/Assets=D:\Assets' --dry-run
 ```
 
-Windows CLI 目标可显式使用 `--target cli`。Desktop 模式保留备份中的归档状态并注册原生项目；Linux 默认 `cli`，Windows/macOS 默认 `desktop`。建议两端都使用 current.7，尤其是相同 UUID 的重复/往返导入。旧版 current.6 没有 `--target` 参数，虽然能读取选择性备份，但不识别新增的元数据比较规则。
+Windows CLI 目标可显式使用 `--target cli`。Desktop 模式保留备份中的归档状态并注册原生项目；Linux 默认 `cli`，Windows/macOS 默认 `desktop`。建议两端都使用 current.8，尤其是相同 UUID 的重复/往返导入。旧版 current.6 没有 `--target` 参数，虽然能读取选择性备份，但不识别新增的元数据比较规则。
 
 ## 验证与限制
 
@@ -84,9 +84,10 @@ Rust 单元/集成测试涵盖跨系统路径、元数据转换、预览和回�
 ```bash
 python3 tests/current_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
 python3 tests/cli_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
+python3 tests/inline_fork_runtime.py --codex-bin "$(command -v codex)" --migrate-bin target/release/codex-migrate
 python3 tests/cli_tui.py --codex-bin "$(command -v codex)"
 ```
 
-`current_runtime.py` 验证 Desktop 引擎，`cli_runtime.py` 验证 Windows 格式备份导入、CLI 筛选/恢复、分页分叉、旧历史、选择性再导出、服务商适配与失败回滚。`cli_tui.py` 在伪终端中实际运行 `codex resume`，选择会话并确认历史和输入框已显示，不提交新消息。Ubuntu 导出后通过 Desktop 引擎回导在 Linux 原生运行时上验证；本次没有在实体 Windows Desktop 上执行新增改动，Windows 构建/回归由 CI 检查。附件实体和项目源码不由迁移工具搬运。
+`current_runtime.py` 验证 Desktop 引擎，`cli_runtime.py` 验证 Windows 格式备份导入、CLI 筛选/恢复、分页分叉、旧历史、选择性再导出、服务商适配与失败回滚。`inline_fork_runtime.py` 验证包含父会话头的完整分叉记录可独立导出、重新导入并恢复。`cli_tui.py` 在伪终端中实际运行 `codex resume`，选择会话并确认历史和输入框已显示，不提交新消息。Ubuntu 导出后通过 Desktop 引擎回导在 Linux 原生运行时上验证；本次没有在实体 Windows Desktop 上执行新增改动，Windows 构建/回归由 CI 检查。附件实体和项目源码不由迁移工具搬运。
 
 导入结果保留事务 ID，可在继续聊天前运行 `codex-migrate rollback ID`。回滚恢复导入前快照，继续聊天后再回滚可能覆盖新内容。官方 CLI 的恢复入口见 [Codex CLI 文档](https://learn.chatgpt.com/docs/codex/cli)。

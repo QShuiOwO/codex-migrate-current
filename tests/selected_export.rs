@@ -205,3 +205,74 @@ fn selected_backup_detects_changed_records_and_does_not_overwrite_existing_backu
         .to_string()
         .contains("checksum mismatch"));
 }
+
+#[test]
+fn inline_forks_keep_distinct_ids_and_export_without_external_parents() {
+    let source = TempDir::new().unwrap();
+    let parent = fixture(source.path(), "parent", false, None);
+    let inherited = fs::read_to_string(&parent).unwrap();
+    let mut originals = Vec::new();
+    for id in ["fork-a", "fork-b"] {
+        let child = fixture(source.path(), id, false, None);
+        let content = fs::read_to_string(&child).unwrap();
+        let (header, rest) = content.split_once('\n').unwrap();
+        let mut header: Value = serde_json::from_str(header).unwrap();
+        header["payload"]["forked_from_id"] = json!("parent");
+        let inline = format!("{header}\n{inherited}{rest}");
+        fs::write(&child, &inline).unwrap();
+        originals.push((child, inline));
+    }
+    let catalog = selective_export::scan(source.path()).unwrap();
+    assert_eq!(catalog.thread_count, 3);
+    let selection = selective_export::plan(&catalog, &ids(&["fork-a", "fork-b"])).unwrap();
+    assert_eq!(selection.thread_ids, ["fork-a", "fork-b"]);
+    assert!(selection.dependency_thread_ids.is_empty());
+    let destination = TempDir::new().unwrap();
+    let summary = selective_export::export(
+        source.path(),
+        destination.path(),
+        &ids(&["fork-a", "fork-b"]),
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(summary.thread_count, 2);
+    let exported = operations::scan_source(Path::new(&summary.output)).unwrap();
+    assert_eq!(exported.thread_count, 2);
+    for (path, content) in &originals {
+        assert_eq!(fs::read_to_string(path).unwrap(), *content);
+        let exported_path =
+            Path::new(&summary.output).join(path.strip_prefix(source.path()).unwrap());
+        assert_eq!(fs::read_to_string(exported_path).unwrap(), *content);
+    }
+    let second = TempDir::new().unwrap();
+    assert_eq!(
+        selective_export::export(
+            Path::new(&summary.output),
+            second.path(),
+            &ids(&["fork-a"]),
+            |_| {}
+        )
+        .unwrap()
+        .thread_count,
+        1
+    );
+}
+
+#[test]
+fn genuinely_duplicate_rollout_ids_still_block_export() {
+    let source = TempDir::new().unwrap();
+    let original = fixture(source.path(), "same-id", false, None);
+    let archived = source.path().join("archived_sessions");
+    fs::create_dir(&archived).unwrap();
+    fs::copy(original, archived.join("duplicate.jsonl")).unwrap();
+    let destination = TempDir::new().unwrap();
+    let error = selective_export::export(
+        source.path(),
+        destination.path(),
+        &ids(&["same-id"]),
+        |_| {},
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("duplicate thread IDs"));
+    assert_eq!(fs::read_dir(destination.path()).unwrap().count(), 0);
+}

@@ -4,6 +4,11 @@ All notable changes to this project will be documented here.
 
 The project uses semantic versioning where practical.
 
+## [1.1.0-current.8] - 2026-10-31
+
+- Fix false duplicate thread IDs when fork rollouts contain copied ancestor `session_meta` records. Use the first header for the rollout's identity and lineage, preserving inline history bytes and rejecting genuine duplicate rollouts as before.
+- Add scan/export/re-export regressions for sibling inline forks and a native import/resume regression in Ubuntu CI using synthetic data only.
+
 ## [1.1.0-current.7] - 2026-10-30
 
 - Maintain Windows x64 and Ubuntu 24.04 x64 in one source tree and version. Run both platform builds in CI and collect both packages and checksums into the same draft prerelease.
@@ -65,7 +70,7 @@ The project uses semantic versioning where practical.
 - Support completed-message events and inherited fork history in HTML exports.
 - Build Windows CLI/GUI and verify synthetic migrations without touching real user history.
 
-## [Unreleased]
+## Upstream unreleased changes (retained history)
 
 - Export backups as complete `.codex` directory copies instead of minimal
   session-only folders, preserving databases, settings, Skills, logs, caches,

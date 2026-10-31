@@ -4,33 +4,35 @@
 
 基于 [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) 的社区 Fork，用于在 **Windows ChatGPT Desktop 与 Ubuntu Codex CLI** 之间迁移本地 Codex 代码对话。两端共用源码、备份格式和版本号，也支持同平台迁移。不迁移普通 ChatGPT / Chat / Work 云端账号历史。
 
-当前版本：**1.1.0-current.7**。上游基线为 v1.0.8、提交 `37f5300c15447921baf3b98d8ef09d07a3a60008`；保留原仓库历史、署名及 MIT 许可证。本项目与 OpenAI 不存在隶属或官方背书关系。
+当前版本：**1.1.0-current.8**。上游基线为 v1.0.8、提交 `37f5300c15447921baf3b98d8ef09d07a3a60008`；保留原仓库历史、署名及 MIT 许可证。本项目与 OpenAI 不存在隶属或官方背书关系。
+
+**current.8 修复分叉会话导出时误报“duplicate thread IDs”。** 扫描器现在以文件首条会话头为准，避免复制进来的父会话信息覆盖子会话 ID；不需要删除或改写原始对话文件。
 
 ## 下载与启动
 
 在 [Releases](https://github.com/QShuiOwO/codex-migrate-current/releases) 选择相同版本的两个平台包；尚未发布的版本可从对应 PR 的 Actions 获取构建产物，也可从源码构建。
 
-| 平台 | current.7 发布文件 | 解压后启动 GUI |
+| 平台 | current.8 发布文件 | 解压后启动 GUI |
 | --- | --- | --- |
-| Windows x64 | `Codex-Migrate-Current-1.1.0-current.7-Windows-x64.zip` | `codex-migrate-gui.exe` |
-| Ubuntu 24.04 x64 | `Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz` | `./codex-migrate-gui` |
+| Windows x64 | `Codex-Migrate-Current-1.1.0-current.8-Windows-x64.zip` | `codex-migrate-gui.exe` |
+| Ubuntu 24.04 x64 | `Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz` | `./codex-migrate-gui` |
 
 每个包包含 GUI、CLI、说明、许可和程序校验值，另附压缩包 `.sha256`。Windows MSVC ZIP 需要 [Microsoft Visual C++ v14 x64 运行库](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。Ubuntu GUI 使用系统 X11/Wayland 和文件选择器；命令行不需要桌面环境。
 
 ```powershell
 # Windows：核对压缩包校验值
-(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.7-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.8-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 ```bash
 # Ubuntu：核对、解压和启动
-sha256sum -c Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz.sha256
-tar -xzf Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz
-cd Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64
+sha256sum -c Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz.sha256
+tar -xzf Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz
+cd Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64
 ./codex-migrate-gui
 ```
 
-Windows 单文件独立 EXE 构建流程仍保留在 `scripts/build-standalone.ps1`。它是单独的可选打包流程，只有在相同版本的 Release 中实际附带时才作为该版本下载项；历史 current.6 EXE 不包含 current.7 的跨平台改动。
+Windows 单文件独立 EXE 构建流程仍保留在 `scripts/build-standalone.ps1`。它是单独的可选打包流程，只有在相同版本的 Release 中实际附带时才作为该版本下载项；历史 current.6 EXE 不包含 current.8 的跨平台改动。
 
 ## Windows → Ubuntu
 
@@ -68,7 +70,7 @@ Ubuntu GUI 可按项目或会话选择性导出；CLI 可重复使用 `--thread`
 # 检查计划后去掉 --dry-run，完成后重新打开 Desktop。
 ```
 
-建议两端都更新到 current.7，特别是对相同 UUID 进行往返合并时。**操作系统与导入目标独立**：Windows 也可选择 `--target cli`。Desktop 模式保留备份中的归档状态，并注册项目和多根工作区。Linux 默认 `cli`，Windows/macOS 默认 `desktop`；macOS 尚无本次同等验证。
+建议两端都更新到 current.8，特别是对相同 UUID 进行往返合并时。**操作系统与导入目标独立**：Windows 也可选择 `--target cli`。Desktop 模式保留备份中的归档状态，并注册项目和多根工作区。Linux 默认 `cli`，Windows/macOS 默认 `desktop`；macOS 尚无本次同等验证。
 
 ## 功能与数据范围
 
@@ -93,7 +95,7 @@ cargo test --locked --all-targets --features gui
 cargo build --locked --release --features gui --bins
 ```
 
-CI 使用 Rust 1.99.0；Ubuntu 本机验证使用 1.99.1 / Codex CLI 0.166.0。Ubuntu 构建依赖、原生合成测试和终端验证见 [Ubuntu 指南](docs/ubuntu-cli.md) 与 [验证记录](docs/ubuntu-validation.md)。Windows 既有 Desktop 26.1023.6621.0 / Codex 0.165.0-alpha.1.2 验证保存在 [历史记录](docs/current-validation.md)；current.7 的 Windows 编译/测试以对应 CI 结果为准，不能代替 Desktop 实机验收。
+CI 使用 Rust 1.99.0；Ubuntu 本机验证使用 1.99.1 / Codex CLI 0.166.0。Ubuntu 构建依赖、原生合成测试和终端验证见 [Ubuntu 指南](docs/ubuntu-cli.md) 与 [验证记录](docs/ubuntu-validation.md)。Windows 既有 Desktop 26.1023.6621.0 / Codex 0.165.0-alpha.1.2 验证保存在 [历史记录](docs/current-validation.md)；current.8 的 Windows 编译/测试以对应 CI 结果为准，不能代替 Desktop 实机验收。
 
 统一发布流程等待两端构建成功，校验两个平台的版本和 SHA-256 后生成同一预发布草稿；详见 [发布维护流程](docs/publishing.md)。完整适配历史见 [CURRENT-VERSION.md](CURRENT-VERSION.md)。
 

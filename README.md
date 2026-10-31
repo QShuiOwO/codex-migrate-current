@@ -4,33 +4,35 @@
 
 A community fork of [ChenglongLi777/codex-migrate](https://github.com/ChenglongLi777/codex-migrate) for moving **local Codex code conversations between Windows ChatGPT Desktop and Ubuntu Codex CLI**. Both platforms share the source code, backup format and version; same-platform migration is supported too. Cloud ChatGPT / Chat / Work account history is outside its scope.
 
-Current version: **1.1.0-current.7**. The upstream baseline is v1.0.8, commit `37f5300c15447921baf3b98d8ef09d07a3a60008`. This fork retains the upstream history, attribution and MIT license. It is not affiliated with or endorsed by OpenAI.
+Current version: **1.1.0-current.8**. The upstream baseline is v1.0.8, commit `37f5300c15447921baf3b98d8ef09d07a3a60008`. This fork retains the upstream history, attribution and MIT license. It is not affiliated with or endorsed by OpenAI.
+
+**Current.8 fixes false “duplicate thread IDs” export errors for forked conversations.** The scanner now uses the first session header instead of overwriting the child ID with copied ancestor metadata. Existing conversation files do not need to be deleted or rewritten.
 
 ## Download and launch
 
 Choose matching platform packages from [Releases](https://github.com/QShuiOwO/codex-migrate-current/releases). Before a version is published, use its PR Actions artifacts or build from source.
 
-| Platform | current.7 release file | Launch the extracted GUI |
+| Platform | current.8 release file | Launch the extracted GUI |
 | --- | --- | --- |
-| Windows x64 | `Codex-Migrate-Current-1.1.0-current.7-Windows-x64.zip` | `codex-migrate-gui.exe` |
-| Ubuntu 24.04 x64 | `Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz` | `./codex-migrate-gui` |
+| Windows x64 | `Codex-Migrate-Current-1.1.0-current.8-Windows-x64.zip` | `codex-migrate-gui.exe` |
+| Ubuntu 24.04 x64 | `Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz` | `./codex-migrate-gui` |
 
 Each package includes the GUI, CLI, documentation, licenses and binary checksums, with a separate archive `.sha256` file. The Windows MSVC ZIP requires the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The Ubuntu GUI uses system X11/Wayland and a file-picker portal; the CLI works without a desktop environment.
 
 ```powershell
 # Windows: compare the archive hash with its .sha256 file
-(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.7-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\Codex-Migrate-Current-1.1.0-current.8-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 ```bash
 # Ubuntu: verify, extract and launch
-sha256sum -c Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz.sha256
-tar -xzf Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64.tar.gz
-cd Codex-Migrate-Current-1.1.0-current.7-Ubuntu-24.04-x64
+sha256sum -c Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz.sha256
+tar -xzf Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64.tar.gz
+cd Codex-Migrate-Current-1.1.0-current.8-Ubuntu-24.04-x64
 ./codex-migrate-gui
 ```
 
-The optional Windows single-file build remains available through `scripts/build-standalone.ps1`. Download it only if that version's Release actually includes it; the historical current.6 standalone EXE does not contain current.7's changes.
+The optional Windows single-file build remains available through `scripts/build-standalone.ps1`. Download it only if that version's Release actually includes it; the historical current.6 standalone EXE does not contain current.8's changes.
 
 ## Windows to Ubuntu
 
@@ -68,7 +70,7 @@ Copy `Codex_backup` to Windows and select **Desktop** in the import GUI, or run:
 # Review, repeat without --dry-run, then reopen Desktop.
 ```
 
-Use current.7 on both machines, particularly when merging the same UUID back and forth. **Operating system and import target are independent**: Windows users can also choose `--target cli`. Desktop mode retains archive state and registers projects and multiple workspace roots. Linux defaults to `cli`; Windows/macOS default to `desktop`. macOS has not received equivalent integration validation.
+Use current.8 on both machines, particularly when merging the same UUID back and forth. **Operating system and import target are independent**: Windows users can also choose `--target cli`. Desktop mode retains archive state and registers projects and multiple workspace roots. Linux defaults to `cli`; Windows/macOS default to `desktop`. macOS has not received equivalent integration validation.
 
 ## Behavior and data scope
 
@@ -93,7 +95,7 @@ cargo test --locked --all-targets --features gui
 cargo build --locked --release --features gui --bins
 ```
 
-CI uses Rust 1.99.0; local Ubuntu validation used Rust 1.99.1 and Codex CLI 0.166.0. Build dependencies, synthetic native tests and terminal validation are documented in the [Ubuntu guide](docs/ubuntu-cli.md) and [validation record](docs/ubuntu-validation.md). Earlier Windows Desktop 26.1023.6621.0 / Codex 0.165.0-alpha.1.2 checks remain in [historical validation](docs/current-validation.md). Current.7 Windows builds/tests are recorded in its CI runs and do not replace Desktop acceptance testing.
+CI uses Rust 1.99.0; local Ubuntu validation used Rust 1.99.1 and Codex CLI 0.166.0. Build dependencies, synthetic native tests and terminal validation are documented in the [Ubuntu guide](docs/ubuntu-cli.md) and [validation record](docs/ubuntu-validation.md). Earlier Windows Desktop 26.1023.6621.0 / Codex 0.165.0-alpha.1.2 checks remain in [historical validation](docs/current-validation.md). Current.8 Windows builds/tests are recorded in its CI runs and do not replace Desktop acceptance testing.
 
 The unified release workflow waits for both platform builds, verifies their versions and SHA-256 files, and creates one draft prerelease. See [publishing](docs/publishing.md) and [adaptation history](CURRENT-VERSION.md).
 
